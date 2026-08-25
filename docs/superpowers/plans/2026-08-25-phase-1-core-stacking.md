@@ -11,13 +11,20 @@
 ## Global Constraints
 
 - Minecraft **26.2**. Fabric Loader **0.19.3**. Loom **1.17-SNAPSHOT**. Fabric API **0.158.0+26.2**.
-- Java **25** — `sourceCompatibility`, `targetCompatibility` and `options.release` all 25; `fabric.mod.json` declares `"java": ">=25"`.
+- Java **25** — Gradle toolchain pinned to 25; `fabric.mod.json` declares `"java": ">=25"`.
+- **This machine has no JDK on PATH** — `java` is a Java 8 JRE and there is no `javac` or system `gradle`. The only JDK 25 present is the JetBrains Runtime bundled with Android Studio. **Every Gradle command must be run as:**
+
+  ```bash
+  JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew <task>
+  ```
+
+  Running plain `./gradlew` will fail — Gradle's launcher cannot start on Java 8. Do not attempt to install a JDK; do not edit system environment variables. Use the prefix.
 - **Official Mojang mappings.** Minecraft is unobfuscated from 26.1 onward and Yarn is discontinued. There is **no `mappings` line** in `build.gradle`, and Fabric API is a plain `implementation` dependency, **not** `modImplementation`. Use official names: `Mob`, `Animal`, `LivingEntity`, `ServerLevel`, `CompoundTag`, `ResourceLocation`.
 - **Server-side only.** No client source set, no `splitEnvironmentSourceSets()`, no client entrypoint. `"environment": "*"` so the integrated server in singleplayer also loads it.
 - Mod id `mobtimizer`, package root `com.mobtimizer`, Maven group `com.mobtimizer`.
 - **No new runtime dependencies.** Gson ships with Minecraft; use it rather than adding a config library.
 - All Mixins live under `com.mobtimizer.mixin` and nowhere else, so version-fragile code stays quarantined.
-- Every task ends with a passing `./gradlew build` and a commit.
+- Every task ends with a passing `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build` and a commit.
 - Spec of record: `docs/superpowers/specs/2026-08-25-mobtimizer-design.md`.
 
 ## Out of scope for phase 1
@@ -104,8 +111,15 @@ pluginManagement {
     }
 }
 
+// Lets Gradle download JDK 25 on machines that don't have it, instead of failing.
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
 rootProject.name = 'mobtimizer'
 ```
+
+**Verify:** confirm the current `foojay-resolver-convention` version is `1.0.0`; if Gradle rejects it, use the version its error message suggests. If the plugin cannot be resolved at all, drop this block — the local JetBrains Runtime satisfies the toolchain on this machine regardless.
 
 - [ ] **Step 4: Write `gradle.properties`**
 
@@ -173,14 +187,20 @@ processResources {
 
 java {
     withSourcesJar()
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
     it.options.release = 25
 }
 ```
+
+A toolchain is used rather than `sourceCompatibility`/`targetCompatibility` so the build declares
+the JDK it needs and Gradle resolves it, instead of silently compiling against whatever JVM
+happens to be running. Combined with the Foojay resolver in `settings.gradle`, a machine without
+JDK 25 downloads it automatically rather than failing with a confusing compile error.
 
 If the `fabric-loom` plugin id fails to resolve, use the fully qualified `net.fabricmc.fabric-loom` instead. Do not change the version.
 
@@ -290,7 +310,7 @@ class BootstrapTest {
 
 - [ ] **Step 10: Run the build**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS, both tests green.
 
 If `registriesAreReachable` fails on `builtInRegistryHolder`, look up the current way to get an `EntityType`'s registry key in 26.2 and adjust — the point of the test is only to prove registries bootstrap.
@@ -368,7 +388,7 @@ class ConfigManagerTest {
 
 - [ ] **Step 2: Run it to confirm it fails**
 
-Run: `./gradlew test --tests "com.mobtimizer.config.ConfigManagerTest"`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew test --tests "com.mobtimizer.config.ConfigManagerTest"`
 Expected: FAIL — `MobtimizerConfig` and `ConfigManager` do not exist.
 
 - [ ] **Step 3: Write `MobtimizerConfig`**
@@ -513,7 +533,7 @@ public final class ConfigManager {
 
 - [ ] **Step 5: Run the tests**
 
-Run: `./gradlew test --tests "com.mobtimizer.config.ConfigManagerTest"`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew test --tests "com.mobtimizer.config.ConfigManagerTest"`
 Expected: PASS, all three.
 
 Note the second test relies on Gson's partial-deserialization behaviour: `{"merge":{"crowdThreshold":9}}` replaces the whole `merge` object, so `radius` comes from `Merge`'s own field initialiser. If that assertion fails, Gson is constructing `Merge` without running initialisers — switch `ConfigManager` to deserialize into a `JsonObject` and merge key-by-key over the defaults.
@@ -609,7 +629,7 @@ class StackEligibilityTest {
 
 - [ ] **Step 3: Run it to confirm it fails**
 
-Run: `./gradlew test --tests "com.mobtimizer.identity.StackEligibilityTest"`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew test --tests "com.mobtimizer.identity.StackEligibilityTest"`
 Expected: FAIL — the class does not exist.
 
 - [ ] **Step 4: Write `StackEligibility`**
@@ -677,7 +697,7 @@ public final class StackNameplate {
 
 - [ ] **Step 6: Run the tests**
 
-Run: `./gradlew test --tests "com.mobtimizer.identity.StackEligibilityTest"`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew test --tests "com.mobtimizer.identity.StackEligibilityTest"`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -779,7 +799,7 @@ class StackKeyFactoryTest {
 
 - [ ] **Step 3: Run it to confirm it fails**
 
-Run: `./gradlew test --tests "com.mobtimizer.identity.StackKeyFactoryTest"`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew test --tests "com.mobtimizer.identity.StackKeyFactoryTest"`
 Expected: FAIL — the classes do not exist.
 
 - [ ] **Step 4: Write `StackKey`**
@@ -853,7 +873,7 @@ public final class StackKeyFactory {
 
 - [ ] **Step 6: Run the tests**
 
-Run: `./gradlew test --tests "com.mobtimizer.identity.StackKeyFactoryTest"`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew test --tests "com.mobtimizer.identity.StackKeyFactoryTest"`
 Expected: PASS, all four.
 
 - [ ] **Step 7: Commit**
@@ -945,7 +965,7 @@ class MobStackTest {
 
 - [ ] **Step 2: Run it to confirm it fails**
 
-Run: `./gradlew test --tests "com.mobtimizer.stack.MobStackTest"`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew test --tests "com.mobtimizer.stack.MobStackTest"`
 Expected: FAIL — `MobStack` does not exist.
 
 - [ ] **Step 3: Write `MobStack`**
@@ -1038,7 +1058,7 @@ Call `MobtimizerAttachments.register()` from `Mobtimizer.onInitialize()`, after 
 
 - [ ] **Step 5: Run the tests**
 
-Run: `./gradlew test --tests "com.mobtimizer.stack.MobStackTest"`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew test --tests "com.mobtimizer.stack.MobStackTest"`
 Expected: PASS, all five.
 
 - [ ] **Step 6: Commit**
@@ -1131,7 +1151,7 @@ public class DormantStoreGameTest {
 
 - [ ] **Step 3: Run it to confirm it fails**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: FAIL — `DormantStore` does not exist.
 
 - [ ] **Step 4: Write `DormantStore`**
@@ -1244,7 +1264,7 @@ public final class Dormancy {
 
 - [ ] **Step 6: Run the build**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -1337,7 +1357,7 @@ public class DormancyGameTest {
 
 - [ ] **Step 4: Run it to confirm it fails**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: FAIL — the stub does nothing, so `isFrozen` returns false.
 
 - [ ] **Step 5: Write `Dormancy`**
@@ -1497,7 +1517,7 @@ public abstract class FrozenAiMixin {
 
 - [ ] **Step 10: Run the gametest**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS.
 
 If the build fails with a Mixin target resolution error, the method name from Step 1 is wrong. Re-check the descriptor — an `@Inject` that cannot find its target fails at load, which is the intended safety net.
@@ -1568,7 +1588,7 @@ public class StackManagerGameTest {
 
 - [ ] **Step 2: Run it to confirm it fails**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: FAIL — `StackManager` does not exist.
 
 - [ ] **Step 3: Write `StackManager`**
@@ -1636,7 +1656,7 @@ Add to the Task 3 stub so this compiles; Task 11 implements it:
 
 - [ ] **Step 5: Run the gametests**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS, all three.
 
 - [ ] **Step 6: Commit**
@@ -1706,7 +1726,7 @@ public class MergeScannerGameTest {
 
 - [ ] **Step 2: Run it to confirm it fails**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: FAIL — `MergeScanner` does not exist.
 
 - [ ] **Step 3: Write `MergeScanner`**
@@ -1831,7 +1851,7 @@ net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_WORLD_TICK
 
 - [ ] **Step 5: Run the gametests**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS, both.
 
 - [ ] **Step 6: Commit**
@@ -1851,7 +1871,7 @@ This is the first point where the mod does something visible. Run it before laye
 
 - [ ] **Step 1: Launch the game**
 
-Run: `./gradlew runServer` (or `runClient` if Loom generated one).
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew runServer` (or `runClient` if Loom generated one).
 
 - [ ] **Step 2: Test the crowd gate**
 
@@ -1938,7 +1958,7 @@ public class StackNameplateGameTest {
 
 - [ ] **Step 2: Run it to confirm it fails**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: FAIL — the stub does nothing.
 
 - [ ] **Step 3: Write `StackNameplate`**
@@ -2005,7 +2025,7 @@ Setting the name in code does not set `PersistenceRequired` — only the name ta
 
 - [ ] **Step 4: Run the gametests**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS, all three.
 
 - [ ] **Step 5: Commit**
@@ -2062,7 +2082,7 @@ public class UnstackGameTest {
 
 - [ ] **Step 2: Run it to confirm it fails**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: FAIL — `MobtimizerCommand` does not exist.
 
 - [ ] **Step 3: Write `MobtimizerCommand`**
@@ -2260,7 +2280,7 @@ net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STARTED
 
 - [ ] **Step 6: Run the gametest**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -2322,7 +2342,7 @@ public class PersistenceGameTest {
 
 - [ ] **Step 2: Run the full suite**
 
-Run: `./gradlew build`
+Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS — every unit test and gametest.
 
 - [ ] **Step 3: Second manual play-test**
@@ -2358,7 +2378,7 @@ git commit -m "test: stack persistence across save/load; document phase 1 status
 
 ## Phase 1 done when
 
-- `./gradlew build` passes with every unit test and gametest green
+- `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build` passes with every unit test and gametest green
 - 30 cows in a pen render as one labelled cow and tick as one
 - `/mobtimizer unstack all` returns exactly 30 individual cows
 - stacks survive a world reload
