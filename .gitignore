@@ -32,3 +32,6 @@ replay_*.log
 # OS
 .DS_Store
 Thumbs.db
+
+# Subagent-driven development scratch
+.superpowers/
