@@ -19,13 +19,36 @@
   ```
 
   Running plain `./gradlew` will fail — Gradle's launcher cannot start on Java 8. Do not attempt to install a JDK; do not edit system environment variables. Use the prefix.
-- **Official Mojang mappings.** Minecraft is unobfuscated from 26.1 onward and Yarn is discontinued. There is **no `mappings` line** in `build.gradle`, and Fabric API is a plain `implementation` dependency, **not** `modImplementation`. Use official names: `Mob`, `Animal`, `LivingEntity`, `ServerLevel`, `CompoundTag`, `ResourceLocation`.
+- **Official Mojang mappings.** Minecraft is unobfuscated from 26.1 onward and Yarn is discontinued. There is **no `mappings` line** in `build.gradle`, and Fabric API is a plain `implementation` dependency, **not** `modImplementation`. Use official names: `Mob`, `Animal`, `LivingEntity`, `ServerLevel`, `CompoundTag`, `Identifier`.
 - **Server-side only.** No client source set, no `splitEnvironmentSourceSets()`, no client entrypoint. `"environment": "*"` so the integrated server in singleplayer also loads it.
 - Mod id `mobtimizer`, package root `com.mobtimizer`, Maven group `com.mobtimizer`.
 - **No new runtime dependencies.** Gson ships with Minecraft; use it rather than adding a config library.
 - All Mixins live under `com.mobtimizer.mixin` and nowhere else, so version-fragile code stays quarantined.
 - Every task ends with a passing `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build` and a commit.
 - Spec of record: `docs/superpowers/specs/2026-08-25-mobtimizer-design.md`.
+
+## Verified 26.2 API facts
+
+Established empirically during Task 1 by disassembling the real
+`minecraft-merged-deobf-26.2.jar` and building the unmodified `fabric-example-mod` 26.2
+branch for comparison. **These override any contradicting memory, tutorial, or older
+Fabric documentation.** Several are surprising; none are guesses.
+
+| Fact | Detail |
+|---|---|
+| `ResourceLocation` **no longer exists** | Renamed to `Identifier`, same package: `net.minecraft.resources.Identifier`. Factory is `Identifier.fromNamespaceAndPath(ns, path)`. A grep of the whole jar finds no `ResourceLocation` class. |
+| Entity type constants moved | `EntityType.COW` is gone. Constants live on a sibling holder class `net.minecraft.world.entity.EntityTypes` (plural), mirroring the existing `Blocks`/`Block` split. Use `EntityTypes.COW`. `EntityType<?>` remains the generic type. |
+| `ResourceKey.location()` renamed | Now `ResourceKey.identifier()`. |
+| Registry key lookup | `EntityType.getKey(EntityType<?>)` is the non-deprecated accessor. `builtInRegistryHolder()` still works but is `@Deprecated` and emits a warning. |
+| Loom plugin id | Must be `net.fabricmc.fabric-loom`. The short `fabric-loom` id resolves to the legacy remap variant and fails with `Configuration 'mappings' has no dependencies`. |
+| Mixin compatibility | Bundled Mixin is `sponge-mixin-0.17.3+mixin.0.8.7`; its `CompatibilityLevel` enum reaches `JAVA_25`, so the config's `JAVA_21` is valid. |
+
+Manage imports accordingly — a file using only `EntityTypes.COW` should import
+`EntityTypes`, not `EntityType`. Leave no unused imports.
+
+When a name in your brief's code contradicts this table, **the table wins** — the brief was
+drafted before these were verified. If you hit a further rename not listed here, confirm it
+against the real jar rather than guessing, and report it so later tasks inherit the finding.
 
 ## Out of scope for phase 1
 
@@ -76,7 +99,7 @@ The `MobStack` codec must use `optionalFieldOf` with defaults throughout so phas
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `com.mobtimizer.Mobtimizer.MOD_ID` (`String`, value `"mobtimizer"`), `Mobtimizer.LOGGER` (`org.slf4j.Logger`), and `Mobtimizer.id(String path)` returning `ResourceLocation` — every later task uses these.
+- Produces: `com.mobtimizer.Mobtimizer.MOD_ID` (`String`, value `"mobtimizer"`), `Mobtimizer.LOGGER` (`org.slf4j.Logger`), and `Mobtimizer.id(String path)` returning `Identifier` — every later task uses these.
 
 - [ ] **Step 1: Get the Gradle wrapper**
 
@@ -146,7 +169,7 @@ Note there is deliberately **no `mappings` line** and Fabric API uses `implement
 
 ```groovy
 plugins {
-    id 'fabric-loom' version "${loom_version}"
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
     id 'maven-publish'
 }
 
@@ -202,7 +225,7 @@ the JDK it needs and Gradle resolves it, instead of silently compiling against w
 happens to be running. Combined with the Foojay resolver in `settings.gradle`, a machine without
 JDK 25 downloads it automatically rather than failing with a confusing compile error.
 
-If the `fabric-loom` plugin id fails to resolve, use the fully qualified `net.fabricmc.fabric-loom` instead. Do not change the version.
+The fully-qualified plugin id is required. The short `fabric-loom` id still resolves, but to the legacy remap-oriented variant, which fails with `Configuration 'mappings' has no dependencies` on unobfuscated Minecraft. Verified in Task 1.
 
 - [ ] **Step 6: Write `src/main/resources/fabric.mod.json`**
 
@@ -253,7 +276,7 @@ The `mixins` array stays empty until Task 8. An empty array is valid and loads f
 package com.mobtimizer;
 
 import net.fabricmc.api.ModInitializer;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -261,8 +284,8 @@ public final class Mobtimizer implements ModInitializer {
     public static final String MOD_ID = "mobtimizer";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-    public static ResourceLocation id(String path) {
-        return ResourceLocation.fromNamespaceAndPath(MOD_ID, path);
+    public static Identifier id(String path) {
+        return Identifier.fromNamespaceAndPath(MOD_ID, path);
     }
 
     @Override
@@ -272,7 +295,7 @@ public final class Mobtimizer implements ModInitializer {
 }
 ```
 
-**Verify:** confirm `ResourceLocation.fromNamespaceAndPath` exists in 26.2. If it was renamed, use whatever static factory `ResourceLocation` exposes for a namespace+path pair.
+**Verify:** confirm `Identifier.fromNamespaceAndPath` exists in 26.2. If it was renamed, use whatever static factory `Identifier` exposes for a namespace+path pair.
 
 - [ ] **Step 9: Write the failing harness test**
 
@@ -303,7 +326,7 @@ class BootstrapTest {
 
     @Test
     void registriesAreReachable() {
-        assertEquals("cow", EntityType.COW.builtInRegistryHolder().key().location().getPath());
+        assertEquals("cow", EntityType.getKey(EntityTypes.COW).getPath());
     }
 }
 ```
@@ -313,7 +336,7 @@ class BootstrapTest {
 Run: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew build`
 Expected: PASS, both tests green.
 
-If `registriesAreReachable` fails on `builtInRegistryHolder`, look up the current way to get an `EntityType`'s registry key in 26.2 and adjust — the point of the test is only to prove registries bootstrap.
+`EntityType.getKey` is the non-deprecated registry accessor; `builtInRegistryHolder()` also works but emits a deprecation warning, and a foundational test every later suite builds on should compile clean.
 
 - [ ] **Step 11: Commit**
 
@@ -611,8 +634,8 @@ class StackEligibilityTest {
     @Test
     void denylistBlocksListedTypes() {
         MobtimizerConfig.Entities entities = new MobtimizerConfig.Entities();
-        assertFalse(entities.isAllowed(EntityType.VILLAGER));
-        assertTrue(entities.isAllowed(EntityType.COW));
+        assertFalse(entities.isAllowed(EntityTypes.VILLAGER));
+        assertTrue(entities.isAllowed(EntityTypes.COW));
     }
 
     @Test
@@ -621,8 +644,8 @@ class StackEligibilityTest {
         entities.mode = "ALLOWLIST";
         entities.allowlist.add("minecraft:cow");
 
-        assertTrue(entities.isAllowed(EntityType.COW));
-        assertFalse(entities.isAllowed(EntityType.PIG));
+        assertTrue(entities.isAllowed(EntityTypes.COW));
+        assertFalse(entities.isAllowed(EntityTypes.PIG));
     }
 }
 ```
@@ -718,7 +741,7 @@ git commit -m "feat: stack eligibility predicate"
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `StackKey` (a record of `ResourceLocation typeId, CompoundTag identity`) and `StackKeyFactory.of(Mob mob)` returning `StackKey`. `StackKey` has value equality.
+- Produces: `StackKey` (a record of `Identifier typeId, CompoundTag identity`) and `StackKeyFactory.of(Mob mob)` returning `StackKey`. `StackKey` has value equality.
 
 **Why NBT hashing rather than per-type comparators:** hand-written variant comparators must be written once per mob type and silently return "these match" for any modded mob whose variant field nobody thought about. Serializing and diffing against an explicit ignore list inverts that: everything must match unless it is on a list you can read in one screen, and modded mobs work correctly with no per-type code.
 
@@ -740,14 +763,14 @@ Write down the exact call you find and use it in Step 3. Everything else in this
 package com.mobtimizer.identity;
 
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class StackKeyFactoryTest {
     private static StackKey key(String type, CompoundTag identity) {
-        return new StackKey(ResourceLocation.parse(type), identity);
+        return new StackKey(Identifier.parse(type), identity);
     }
 
     @Test
@@ -808,7 +831,7 @@ Expected: FAIL — the classes do not exist.
 package com.mobtimizer.identity;
 
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /**
  * Identity of a stack: two mobs may merge only if their keys are equal.
@@ -817,7 +840,7 @@ import net.minecraft.resources.ResourceLocation;
  * hash collision would merge mobs that must never merge. Record equality
  * delegates to {@link CompoundTag#equals}, which compares by content.
  */
-public record StackKey(ResourceLocation typeId, CompoundTag identity) {
+public record StackKey(Identifier typeId, CompoundTag identity) {
 }
 ```
 
@@ -1129,8 +1152,8 @@ import net.minecraft.world.entity.animal.Cow;
 public class DormantStoreGameTest {
     @GameTest
     public void addThenTakeOneRoundTrips(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        Cow member = helper.spawn(EntityType.COW, 2, 2, 1);
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        Cow member = helper.spawn(EntityTypes.COW, 2, 2, 1);
 
         DormantStore.INSTANCE.add(host, member);
         helper.assertTrue(DormantStore.INSTANCE.size(host) == 1, "member should be stored");
@@ -1333,8 +1356,8 @@ import net.minecraft.world.entity.animal.Cow;
 public class DormancyGameTest {
     @GameTest
     public void freezeThenThawRestoresTheMob(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        Cow member = helper.spawn(EntityType.COW, 3, 2, 3);
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        Cow member = helper.spawn(EntityTypes.COW, 3, 2, 3);
 
         Dormancy.freeze(member, host);
 
@@ -1554,8 +1577,8 @@ import net.minecraft.world.entity.animal.Cow;
 public class StackManagerGameTest {
     @GameTest
     public void mergeIncrementsCount(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        Cow member = helper.spawn(EntityType.COW, 2, 2, 1);
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        Cow member = helper.spawn(EntityTypes.COW, 2, 2, 1);
 
         helper.assertTrue(StackManager.merge(host, member), "matching cows should merge");
         helper.assertTrue(StackManager.countOf(host) == 2, "count should be 2");
@@ -1564,8 +1587,8 @@ public class StackManagerGameTest {
 
     @GameTest
     public void differentTypesDoNotMerge(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        var pig = helper.spawn(EntityType.PIG, 2, 2, 1);
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        var pig = helper.spawn(EntityTypes.PIG, 2, 2, 1);
 
         helper.assertFalse(StackManager.merge(host, pig), "a pig must not join a cow stack");
         helper.assertTrue(StackManager.countOf(host) == 1, "count should be unchanged");
@@ -1574,9 +1597,9 @@ public class StackManagerGameTest {
 
     @GameTest
     public void unstackReleasesEveryMember(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityType.COW, 2, 2, 1));
-        StackManager.merge(host, helper.spawn(EntityType.COW, 3, 2, 1));
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 3, 2, 1));
 
         helper.assertTrue(StackManager.countOf(host) == 3, "three cows before unstack");
         helper.assertTrue(StackManager.unstack(host) == 2, "two members should be released");
@@ -1696,9 +1719,9 @@ public class MergeScannerGameTest {
     @GameTest
     public void belowThresholdNothingMerges(GameTestHelper helper) {
         // Default crowdThreshold is 4; three cows must stay individual.
-        Cow a = helper.spawn(EntityType.COW, 1, 2, 1);
-        helper.spawn(EntityType.COW, 1, 2, 2);
-        helper.spawn(EntityType.COW, 1, 2, 3);
+        Cow a = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        helper.spawn(EntityTypes.COW, 1, 2, 2);
+        helper.spawn(EntityTypes.COW, 1, 2, 3);
 
         MergeScanner.tick(helper.getLevel());
 
@@ -1708,11 +1731,11 @@ public class MergeScannerGameTest {
 
     @GameTest
     public void atThresholdCowsMerge(GameTestHelper helper) {
-        Cow a = helper.spawn(EntityType.COW, 1, 2, 1);
-        helper.spawn(EntityType.COW, 1, 2, 2);
-        helper.spawn(EntityType.COW, 1, 2, 3);
-        helper.spawn(EntityType.COW, 2, 2, 1);
-        helper.spawn(EntityType.COW, 2, 2, 2);
+        Cow a = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        helper.spawn(EntityTypes.COW, 1, 2, 2);
+        helper.spawn(EntityTypes.COW, 1, 2, 3);
+        helper.spawn(EntityTypes.COW, 2, 2, 1);
+        helper.spawn(EntityTypes.COW, 2, 2, 2);
 
         MergeScanner.tick(helper.getLevel());
 
@@ -1924,8 +1947,8 @@ import net.minecraft.world.entity.animal.Cow;
 public class StackNameplateGameTest {
     @GameTest
     public void labelShowsTheCountAndIsHoverOnly(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityType.COW, 2, 2, 1));
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
 
         helper.assertTrue(host.hasCustomName(), "a stack should be labelled");
         helper.assertTrue(host.getCustomName().getString().contains("2"), "label should show the count");
@@ -1935,10 +1958,10 @@ public class StackNameplateGameTest {
 
     @GameTest
     public void modOwnedLabelDoesNotBlockFurtherMerging(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityType.COW, 2, 2, 1));
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
         // The host is now custom-named by us. It must still accept new members.
-        helper.assertTrue(StackManager.merge(host, helper.spawn(EntityType.COW, 3, 2, 1)),
+        helper.assertTrue(StackManager.merge(host, helper.spawn(EntityTypes.COW, 3, 2, 1)),
                 "a mod-owned nameplate must not make the host ineligible");
         helper.assertTrue(StackManager.countOf(host) == 3, "count should reach 3");
         helper.succeed();
@@ -1946,8 +1969,8 @@ public class StackNameplateGameTest {
 
     @GameTest
     public void unstackedHostLosesItsLabel(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityType.COW, 2, 2, 1));
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
         StackManager.unstack(host);
 
         helper.assertFalse(host.hasCustomName(), "a stack of 1 should have no label");
@@ -2067,9 +2090,9 @@ import net.minecraft.world.entity.animal.Cow;
 public class UnstackGameTest {
     @GameTest
     public void unstackRestoresIndependentMobs(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityType.COW, 2, 2, 1));
-        StackManager.merge(host, helper.spawn(EntityType.COW, 3, 2, 1));
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 3, 2, 1));
 
         int released = MobtimizerCommand.unstackAll(helper.getLevel());
 
@@ -2099,7 +2122,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
@@ -2130,7 +2153,7 @@ public final class MobtimizerCommand {
                                 .then(Commands.argument("id", StringArgumentType.string())
                                         .executes(ctx -> {
                                             String raw = StringArgumentType.getString(ctx, "id");
-                                            ResourceLocation id = ResourceLocation.tryParse(raw);
+                                            Identifier id = Identifier.tryParse(raw);
                                             EntityType<?> type = id == null ? null
                                                     : BuiltInRegistries.ENTITY_TYPE.getOptional(id).orElse(null);
                                             if (type == null) {
@@ -2202,7 +2225,7 @@ The entity type is taken as a plain string and resolved against the registry rat
 The string form costs tab-completion but keeps the signature simple and cannot break when the
 argument-type API shifts between versions.
 
-**Verify:** `CommandSourceStack.getLevel()`, `getPosition()`, `sendSuccess(Supplier<Component>, boolean)`, `sendFailure(Component)`, `hasPermission(int)`, and `BuiltInRegistries.ENTITY_TYPE.getOptional(ResourceLocation)` — confirm each in 26.2.
+**Verify:** `CommandSourceStack.getLevel()`, `getPosition()`, `sendSuccess(Supplier<Component>, boolean)`, `sendFailure(Component)`, `hasPermission(int)`, and `BuiltInRegistries.ENTITY_TYPE.getOptional(Identifier)` — confirm each in 26.2.
 
 - [ ] **Step 4: Write `VersionGuard`**
 
@@ -2252,7 +2275,7 @@ public final class VersionGuard {
             for (var level : server.getAllLevels()) {
                 int released = MobtimizerCommand.unstackAll(level);
                 if (released > 0) {
-                    Mobtimizer.LOGGER.info("Released {} mobs in {}", released, level.dimension().location());
+                    Mobtimizer.LOGGER.info("Released {} mobs in {}", released, level.dimension().identifier());
                 }
             }
         }
@@ -2319,14 +2342,14 @@ import net.minecraft.world.entity.animal.Cow;
 public class PersistenceGameTest {
     @GameTest
     public void stackStateSurvivesSerialization(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityType.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityType.COW, 2, 2, 1));
-        StackManager.merge(host, helper.spawn(EntityType.COW, 3, 2, 1));
+        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
+        StackManager.merge(host, helper.spawn(EntityTypes.COW, 3, 2, 1));
 
         CompoundTag saved = new CompoundTag();
         host.saveWithoutId(saved); // match the API confirmed in Task 4
 
-        Cow reloaded = EntityType.COW.create(helper.getLevel(), null);
+        Cow reloaded = EntityTypes.COW.create(helper.getLevel(), null);
         reloaded.load(saved);
 
         helper.assertTrue(reloaded.getAttached(MobtimizerAttachments.STACK) != null,
