@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.UUIDUtil;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -18,6 +19,13 @@ import java.util.UUID;
  *
  * <p>Every codec field is optional with a default so later phases can add
  * fields without invalidating existing saves.
+ *
+ * <p>{@code members} never contains a duplicate UUID: the compact constructor
+ * de-duplicates unconditionally (preserving first-seen order), so the
+ * "no duplicate members" invariant holds no matter how a particular instance
+ * was built - through {@link #withMember}, a direct {@code new MobStack(...)}
+ * call, or by decoding a hand-edited or otherwise corrupted save through
+ * {@link #CODEC}. A duplicate is silently dropped, not logged or rejected.
  */
 public record MobStack(List<UUID> members, boolean nameplateOwned) {
     public static final MobStack EMPTY = new MobStack(List.of(), false);
@@ -28,7 +36,7 @@ public record MobStack(List<UUID> members, boolean nameplateOwned) {
     ).apply(instance, MobStack::new));
 
     public MobStack {
-        members = List.copyOf(members);
+        members = List.copyOf(new LinkedHashSet<>(members));
     }
 
     /** Total mobs represented, including the host. */
@@ -36,7 +44,18 @@ public record MobStack(List<UUID> members, boolean nameplateOwned) {
         return members.size() + 1;
     }
 
+    /**
+     * A no-op (returns {@code this}) if {@code member} is already present. Two
+     * entries for the same UUID would otherwise silently inflate
+     * {@link #memberCount()} and risk double-processing wherever a later task
+     * iterates {@link #members()}. The compact constructor also de-duplicates as
+     * a backstop for other construction paths; this early return additionally
+     * skips allocating a new list and instance for what is already a no-op.
+     */
     public MobStack withMember(UUID member) {
+        if (members.contains(member)) {
+            return this;
+        }
         List<UUID> next = new ArrayList<>(members);
         next.add(member);
         return new MobStack(next, nameplateOwned);
