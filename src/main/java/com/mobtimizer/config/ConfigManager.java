@@ -30,7 +30,15 @@ public final class ConfigManager {
         }
     }
 
-    /** Visible for tests: reads {@code file}, writing defaults if absent or unreadable. */
+    /**
+     * Visible for tests: reads {@code file}.
+     *
+     * <p>If the file does not exist, it is created with defaults. If the file exists but
+     * cannot be parsed, it is left untouched on disk — a corrupted or hand-edited file is
+     * never silently overwritten — and this method logs a warning and returns in-memory
+     * defaults instead. That leaves the broken file in place for the user to notice and fix,
+     * rather than destroying whatever they customised over a single typo.
+     */
     public static MobtimizerConfig loadFrom(Path file) {
         MobtimizerConfig config = new MobtimizerConfig();
 

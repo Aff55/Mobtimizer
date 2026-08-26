@@ -41,4 +41,17 @@ class ConfigManagerTest {
 
         assertEquals(4, config.merge.crowdThreshold);
     }
+
+    @Test
+    void malformedFileIsLeftUntouchedOnDisk(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("mobtimizer.json");
+        String malformed = "{ this is not json";
+        Files.writeString(file, malformed);
+
+        ConfigManager.loadFrom(file);
+
+        assertEquals(malformed, Files.readString(file),
+                "a corrupted config must be left alone on disk so the user can see and fix "
+                        + "the mistake, not have it silently overwritten with defaults");
+    }
 }
