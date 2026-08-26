@@ -70,6 +70,38 @@ enchantments would serialize identically, compare equal, and merge. An enchanted
 would be laundered into a plain stack and its gear quietly destroyed. The registry access costs
 nothing at the call site — `mob.level().registryAccess()` is already a `HolderLookup.Provider`.
 
+### The Fabric attachment API
+
+Verified in Task 5 against Fabric API 0.158.0+26.2.
+
+**`AttachmentRegistry.builder()` is deprecated.** Use the identifier-first entry point:
+
+```java
+STACK = AttachmentRegistry.create(Mobtimizer.id("stack"), builder -> builder
+        .persistent(MobStack.CODEC)
+        .initializer(() -> MobStack.EMPTY));
+```
+
+The `Builder` handed to the consumer is the same type with the same methods, so behaviour is
+unchanged. Never add `.syncWith(...)` — this mod is server-side.
+
+**`getAttached` returns `null` even when an initializer is registered.** The initializer only
+runs for `getAttachedOrCreate`. This is the trap in this API:
+
+| Call | Behaviour |
+|---|---|
+| `getAttached(TYPE)` | `null` until something calls `setAttached` — the initializer does **not** fire |
+| `getAttachedOrElse(TYPE, default)` | returns the default as-is, does not persist it |
+| `getAttachedOrCreate(TYPE, supplier)` | persists the created value on first read |
+| `getAttachedOrCreate(TYPE)` | throws if no initializer was registered |
+
+**Read stack state with `getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY)`**, never
+bare `getAttached`, or an unstacked mob NPEs. No cast to `AttachmentTarget` is needed — the
+methods resolve directly on `Mob`/`Entity`.
+
+Also note `MobtimizerAttachments.STACK` is null until `onInitialize()` runs. Fine for gametests
+and real runs; a plain JUnit test touching it would need `register()` called manually.
+
 ### The `GameTestHelper.spawn` trap
 
 **`GameTestHelper.spawn(...)` and its convenience overloads silently mark every mob they
@@ -1226,7 +1258,7 @@ public class DormantStoreGameTest {
 
         DormantStore.INSTANCE.add(host, member);
         helper.assertTrue(DormantStore.INSTANCE.size(host) == 1, "member should be stored");
-        helper.assertTrue(host.getAttached(MobtimizerAttachments.STACK).memberCount() == 2,
+        helper.assertTrue(host.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).memberCount() == 2,
                 "host plus one member is a stack of 2");
 
         var taken = DormantStore.INSTANCE.takeOne(host);
@@ -1404,10 +1436,9 @@ public static AttachmentType<Boolean> FROZEN;
 and inside `register()`:
 
 ```java
-FROZEN = AttachmentRegistry.<Boolean>builder()
+FROZEN = AttachmentRegistry.create(Mobtimizer.id("frozen"), builder -> builder
         .persistent(Codec.BOOL)
-        .initializer(() -> Boolean.FALSE)
-        .buildAndRegister(Mobtimizer.id("frozen"));
+        .initializer(() -> Boolean.FALSE));
 ```
 
 Persisting this matters: a frozen member must still be frozen after a save/load cycle, or a reloaded farm would wake every member at once.
