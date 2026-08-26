@@ -45,6 +45,31 @@ Fabric documentation.** Several are surprising; none are guesses.
 | Mob classes were repackaged | `Cow` is `net.minecraft.world.entity.animal.cow.Cow`, `Wolf` is `...animal.wolf.Wolf`, `Villager` is `...npc.villager.Villager`. Each mob family now has its own subpackage — check the real path rather than assuming `animal.X`. |
 | Gametest source set | `src/gametest/java/`. There is no pre-existing example in this repo — the single game test seen in early build logs is vanilla's own bundled `always_pass`. |
 
+### Entity serialization — and why `createWithContext` is mandatory
+
+`Entity.saveWithoutId(CompoundTag)` **no longer exists**. Only `saveWithoutId(ValueOutput)`
+remains. Verified in Task 4 against the deobfuscated jar. The call is:
+
+```java
+TagValueOutput output = TagValueOutput.createWithContext(
+        ProblemReporter.DISCARDING, mob.level().registryAccess());
+mob.saveWithoutId(output);
+CompoundTag full = output.buildResult();
+```
+
+Imports: `net.minecraft.util.ProblemReporter`, `net.minecraft.world.level.storage.TagValueOutput`.
+
+**`createWithoutContext` is not an acceptable substitute**, even though it looks simpler and
+takes no registry. Task 4 proved by bytecode and a live experiment that without a registry
+lookup, `RegistryFixedCodec`-backed fields — enchantments, and datapack-registry variants —
+fail to encode and produce **no partial value**, which silently drops the *entire* parent
+field. All of `equipment` disappears rather than just the enchantment inside it.
+
+For this mod that is a correctness hole, not a cosmetic one: two mobs with different
+enchantments would serialize identically, compare equal, and merge. An enchanted-armour zombie
+would be laundered into a plain stack and its gear quietly destroyed. The registry access costs
+nothing at the call site — `mob.level().registryAccess()` is already a `HolderLookup.Provider`.
+
 ### The `GameTestHelper.spawn` trap
 
 **`GameTestHelper.spawn(...)` and its convenience overloads silently mark every mob they
@@ -918,8 +943,10 @@ public final class StackKeyFactory {
     private StackKeyFactory() {}
 
     public static StackKey of(Mob mob) {
-        CompoundTag full = new CompoundTag();
-        mob.saveWithoutId(full); // <-- replace per Step 1 if the API changed
+        TagValueOutput output = TagValueOutput.createWithContext(
+                ProblemReporter.DISCARDING, mob.level().registryAccess());
+        mob.saveWithoutId(output);
+        CompoundTag full = output.buildResult();
         return new StackKey(BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()), stripIgnored(full));
     }
 
@@ -2401,8 +2428,10 @@ public class PersistenceGameTest {
         StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1)));
         StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 1)));
 
-        CompoundTag saved = new CompoundTag();
-        host.saveWithoutId(saved); // match the API confirmed in Task 4
+        TagValueOutput output = TagValueOutput.createWithContext(
+                ProblemReporter.DISCARDING, host.level().registryAccess());
+        host.saveWithoutId(output);
+        CompoundTag saved = output.buildResult();
 
         Cow reloaded = EntityTypes.COW.create(helper.getLevel(), null);
         reloaded.load(saved);
