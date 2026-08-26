@@ -43,8 +43,11 @@ Fabric documentation.** Several are surprising; none are guesses.
 | Loom plugin id | Must be `net.fabricmc.fabric-loom`. The short `fabric-loom` id resolves to the legacy remap variant and fails with `Configuration 'mappings' has no dependencies`. |
 | Mixin compatibility | Bundled Mixin is `sponge-mixin-0.17.3+mixin.0.8.7`; its `CompatibilityLevel` enum reaches `JAVA_25`, so the config's `JAVA_21` is valid. |
 
-Manage imports accordingly — a file using only `EntityTypes.COW` should import
-`EntityTypes`, not `EntityType`. Leave no unused imports.
+Manage imports accordingly. Code blocks below import **both** `EntityType` and
+`EntityTypes` because most need the constants and a few need the generic type;
+**delete whichever your file does not actually use.** Leave no unused imports —
+`EntityType<?>` as a parameter type needs `EntityType`; `EntityTypes.COW` needs
+`EntityTypes`; `EntityType.getKey(EntityTypes.COW)` needs both.
 
 When a name in your brief's code contradicts this table, **the table wins** — the brief was
 drafted before these were verified. If you hit a further rename not listed here, confirm it
@@ -307,6 +310,7 @@ package com.mobtimizer;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -421,6 +425,7 @@ package com.mobtimizer.config;
 
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -619,6 +624,7 @@ import com.mobtimizer.config.MobtimizerConfig;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -1147,6 +1153,7 @@ import com.mobtimizer.MobtimizerAttachments;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.Cow;
 
 public class DormantStoreGameTest {
@@ -1351,6 +1358,7 @@ package com.mobtimizer.freeze;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.Cow;
 
 public class DormancyGameTest {
@@ -1572,6 +1580,7 @@ package com.mobtimizer.stack;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.Cow;
 
 public class StackManagerGameTest {
@@ -1713,6 +1722,7 @@ import com.mobtimizer.stack.StackManager;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.Cow;
 
 public class MergeScannerGameTest {
@@ -1942,6 +1952,7 @@ import com.mobtimizer.stack.StackManager;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.Cow;
 
 public class StackNameplateGameTest {
@@ -2085,6 +2096,7 @@ import com.mobtimizer.stack.StackManager;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.Cow;
 
 public class UnstackGameTest {
@@ -2125,6 +2137,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.phys.Vec3;
 
@@ -2337,6 +2350,7 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.Cow;
 
 public class PersistenceGameTest {
