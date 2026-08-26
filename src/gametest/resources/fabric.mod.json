@@ -8,7 +8,10 @@
 	"license": "MIT",
 	"environment": "*",
 	"entrypoints": {
-		"fabric-gametest": ["com.mobtimizer.gametest.StackEligibilityGameTest"]
+		"fabric-gametest": [
+			"com.mobtimizer.gametest.StackEligibilityGameTest",
+			"com.mobtimizer.gametest.StackKeyFactoryGameTest"
+		]
 	},
 	"depends": {
 		"fabricloader": ">=0.19.3",
