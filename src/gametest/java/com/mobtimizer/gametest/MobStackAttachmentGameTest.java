@@ -100,15 +100,18 @@ public final class MobStackAttachmentGameTest {
     public void mobWithNoAttachmentSetRoundTripsWithoutManufacturingOne(GameTestHelper helper) {
         Cow cow = spawnPlain(helper, EntityTypes.COW, POS);
 
-        ProblemReporter.Collector problems = new ProblemReporter.Collector();
-        TagValueOutput output = TagValueOutput.createWithContext(problems, cow.level().registryAccess());
+        ProblemReporter.Collector saveProblems = new ProblemReporter.Collector();
+        TagValueOutput output = TagValueOutput.createWithContext(saveProblems, cow.level().registryAccess());
         cow.saveWithoutId(output);
         CompoundTag tag = output.buildResult();
+        helper.assertTrue(saveProblems.isEmpty(), "serializing the cow should not report problems");
         helper.assertFalse(tag.contains(AttachmentTarget.NBT_ATTACHMENT_KEY),
                 "a mob with no attachment ever set should not gain one just by being saved");
 
-        ValueInput input = TagValueInput.create(problems, cow.level().registryAccess(), tag);
+        ProblemReporter.Collector loadProblems = new ProblemReporter.Collector();
+        ValueInput input = TagValueInput.create(loadProblems, cow.level().registryAccess(), tag);
         cow.load(input);
+        helper.assertTrue(loadProblems.isEmpty(), "loading the cow's own just-saved tag should not report problems");
 
         helper.assertTrue(cow.getAttached(MobtimizerAttachments.STACK) == null,
                 "loading a tag with no attachment data must not manufacture one from the registered initializer");
