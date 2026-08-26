@@ -42,6 +42,40 @@ Fabric documentation.** Several are surprising; none are guesses.
 | Registry key lookup | `EntityType.getKey(EntityType<?>)` is the non-deprecated accessor. `builtInRegistryHolder()` still works but is `@Deprecated` and emits a warning. |
 | Loom plugin id | Must be `net.fabricmc.fabric-loom`. The short `fabric-loom` id resolves to the legacy remap variant and fails with `Configuration 'mappings' has no dependencies`. |
 | Mixin compatibility | Bundled Mixin is `sponge-mixin-0.17.3+mixin.0.8.7`; its `CompatibilityLevel` enum reaches `JAVA_25`, so the config's `JAVA_21` is valid. |
+| Mob classes were repackaged | `Cow` is `net.minecraft.world.entity.animal.cow.Cow`, `Wolf` is `...animal.wolf.Wolf`, `Villager` is `...npc.villager.Villager`. Each mob family now has its own subpackage — check the real path rather than assuming `animal.X`. |
+| Gametest source set | `src/gametest/java/`. There is no pre-existing example in this repo — the single game test seen in early build logs is vanilla's own bundled `always_pass`. |
+
+### The `GameTestHelper.spawn` trap
+
+**`GameTestHelper.spawn(...)` and its convenience overloads silently mark every mob they
+spawn persistence-required**, so fixtures cannot despawn mid-test. Verified in Task 3 by
+disassembling `GameTestEntityBuilder`.
+
+This is a false-green trap for this mod specifically. `StackEligibility.canStack` excludes
+persistence-required mobs, so a mob spawned the convenient way is ineligible **no matter what
+the test is actually checking** — every "should not stack" assertion would pass for the wrong
+reason, and only the positive case would fail. Any gametest touching eligibility, merging, or
+stacking must spawn through:
+
+```java
+public final class GameTestMobs {
+    private GameTestMobs() {}
+
+    /**
+     * Spawns a mob without the persistence flag that {@link GameTestHelper#spawn} sets.
+     * canStack() excludes persistence-required mobs, so the convenience methods would make
+     * every fixture ineligible regardless of the condition under test.
+     */
+    public static <E extends Entity> E spawnPlain(GameTestHelper helper, EntityType<E> type, BlockPos pos) {
+        return helper.spawnEntity(type, pos).requirePersistence(false).spawn();
+    }
+}
+```
+
+Task 3 created this as a private method inside `StackEligibilityGameTest`. **The first task to
+need it elsewhere must extract it to a shared `com.mobtimizer.gametest.GameTestMobs`** and
+update Task 3's gametest to use it, rather than copying the method. Gametest code blocks below
+already call `GameTestMobs.spawnPlain`.
 
 Manage imports accordingly. Code blocks below import **both** `EntityType` and
 `EntityTypes` because most need the constants and a few need the generic type;
@@ -1154,13 +1188,14 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
-import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.animal.cow.Cow;
 
 public class DormantStoreGameTest {
     @GameTest
     public void addThenTakeOneRoundTrips(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        Cow member = helper.spawn(EntityTypes.COW, 2, 2, 1);
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1));
 
         DormantStore.INSTANCE.add(host, member);
         helper.assertTrue(DormantStore.INSTANCE.size(host) == 1, "member should be stored");
@@ -1359,13 +1394,14 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
-import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.animal.cow.Cow;
 
 public class DormancyGameTest {
     @GameTest
     public void freezeThenThawRestoresTheMob(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        Cow member = helper.spawn(EntityTypes.COW, 3, 2, 3);
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 3));
 
         Dormancy.freeze(member, host);
 
@@ -1581,13 +1617,14 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
-import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.animal.cow.Cow;
 
 public class StackManagerGameTest {
     @GameTest
     public void mergeIncrementsCount(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        Cow member = helper.spawn(EntityTypes.COW, 2, 2, 1);
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1));
 
         helper.assertTrue(StackManager.merge(host, member), "matching cows should merge");
         helper.assertTrue(StackManager.countOf(host) == 2, "count should be 2");
@@ -1596,8 +1633,8 @@ public class StackManagerGameTest {
 
     @GameTest
     public void differentTypesDoNotMerge(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        var pig = helper.spawn(EntityTypes.PIG, 2, 2, 1);
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        var pig = GameTestMobs.spawnPlain(helper, EntityTypes.PIG, new BlockPos(2, 2, 1));
 
         helper.assertFalse(StackManager.merge(host, pig), "a pig must not join a cow stack");
         helper.assertTrue(StackManager.countOf(host) == 1, "count should be unchanged");
@@ -1606,9 +1643,9 @@ public class StackManagerGameTest {
 
     @GameTest
     public void unstackReleasesEveryMember(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 3, 2, 1));
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1)));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 1)));
 
         helper.assertTrue(StackManager.countOf(host) == 3, "three cows before unstack");
         helper.assertTrue(StackManager.unstack(host) == 2, "two members should be released");
@@ -1723,15 +1760,16 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
-import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.animal.cow.Cow;
 
 public class MergeScannerGameTest {
     @GameTest
     public void belowThresholdNothingMerges(GameTestHelper helper) {
         // Default crowdThreshold is 4; three cows must stay individual.
-        Cow a = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        helper.spawn(EntityTypes.COW, 1, 2, 2);
-        helper.spawn(EntityTypes.COW, 1, 2, 3);
+        Cow a = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 2));
+        GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 3));
 
         MergeScanner.tick(helper.getLevel());
 
@@ -1741,11 +1779,11 @@ public class MergeScannerGameTest {
 
     @GameTest
     public void atThresholdCowsMerge(GameTestHelper helper) {
-        Cow a = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        helper.spawn(EntityTypes.COW, 1, 2, 2);
-        helper.spawn(EntityTypes.COW, 1, 2, 3);
-        helper.spawn(EntityTypes.COW, 2, 2, 1);
-        helper.spawn(EntityTypes.COW, 2, 2, 2);
+        Cow a = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 2));
+        GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 3));
+        GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1));
+        GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 2));
 
         MergeScanner.tick(helper.getLevel());
 
@@ -1953,13 +1991,14 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
-import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.animal.cow.Cow;
 
 public class StackNameplateGameTest {
     @GameTest
     public void labelShowsTheCountAndIsHoverOnly(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1)));
 
         helper.assertTrue(host.hasCustomName(), "a stack should be labelled");
         helper.assertTrue(host.getCustomName().getString().contains("2"), "label should show the count");
@@ -1969,10 +2008,10 @@ public class StackNameplateGameTest {
 
     @GameTest
     public void modOwnedLabelDoesNotBlockFurtherMerging(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1)));
         // The host is now custom-named by us. It must still accept new members.
-        helper.assertTrue(StackManager.merge(host, helper.spawn(EntityTypes.COW, 3, 2, 1)),
+        helper.assertTrue(StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 1))),
                 "a mod-owned nameplate must not make the host ineligible");
         helper.assertTrue(StackManager.countOf(host) == 3, "count should reach 3");
         helper.succeed();
@@ -1980,8 +2019,8 @@ public class StackNameplateGameTest {
 
     @GameTest
     public void unstackedHostLosesItsLabel(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1)));
         StackManager.unstack(host);
 
         helper.assertFalse(host.hasCustomName(), "a stack of 1 should have no label");
@@ -2097,14 +2136,15 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
-import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.animal.cow.Cow;
 
 public class UnstackGameTest {
     @GameTest
     public void unstackRestoresIndependentMobs(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 3, 2, 1));
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1)));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 1)));
 
         int released = MobtimizerCommand.unstackAll(helper.getLevel());
 
@@ -2351,14 +2391,15 @@ import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
-import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.animal.cow.Cow;
 
 public class PersistenceGameTest {
     @GameTest
     public void stackStateSurvivesSerialization(GameTestHelper helper) {
-        Cow host = helper.spawn(EntityTypes.COW, 1, 2, 1);
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 2, 2, 1));
-        StackManager.merge(host, helper.spawn(EntityTypes.COW, 3, 2, 1));
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1)));
+        StackManager.merge(host, GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 1)));
 
         CompoundTag saved = new CompoundTag();
         host.saveWithoutId(saved); // match the API confirmed in Task 4
