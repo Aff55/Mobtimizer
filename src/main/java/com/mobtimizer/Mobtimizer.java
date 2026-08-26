@@ -18,6 +18,7 @@ public final class Mobtimizer implements ModInitializer {
     @Override
     public void onInitialize() {
         ConfigManager.load(FabricLoader.getInstance().getConfigDir().resolve("mobtimizer.json"));
+        MobtimizerAttachments.register();
         LOGGER.info("Mobtimizer initialising");
     }
 }
