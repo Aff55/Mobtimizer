@@ -1,6 +1,8 @@
 package com.mobtimizer;
 
+import com.mobtimizer.config.ConfigManager;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +17,7 @@ public final class Mobtimizer implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        ConfigManager.load(FabricLoader.getInstance().getConfigDir().resolve("mobtimizer.json"));
         LOGGER.info("Mobtimizer initialising");
     }
 }
