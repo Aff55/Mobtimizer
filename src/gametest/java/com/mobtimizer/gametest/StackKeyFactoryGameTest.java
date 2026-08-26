@@ -6,6 +6,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
@@ -16,6 +17,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.Enchantments;
+
+import java.util.List;
 
 /**
  * Exercises {@link StackKeyFactory#of} against real spawned mobs.
@@ -132,6 +135,109 @@ public final class StackKeyFactoryGameTest {
 
         helper.assertTrue(StackKeyFactory.of(full).equals(StackKeyFactory.of(damaged)),
                 "Health is on the ignore list: a damaged cow should still share a key with a full-health one");
+        helper.succeed();
+    }
+
+    /**
+     * Task 4 review Finding 1/4: {@code OnGround} was missing from {@code IGNORED_KEYS}
+     * entirely, and {@code FallDistance} matched nothing real ({@code Entity} writes
+     * {@code fall_distance}), so on a real farm - mobs constantly landing, jumping, or
+     * standing on uneven terrain - two otherwise-identical mobs would routinely fail to
+     * merge for no reason visible in any log. This is the test that would have caught
+     * both: it sets the two real fields directly (no need to wait out real physics
+     * ticks) and checks the keys still match.
+     */
+    @GameTest
+    public void transientPhysicsStateDoesNotBlockMerging(GameTestHelper helper) {
+        Cow airborne = spawnPlain(helper, EntityTypes.COW, POS);
+        airborne.setOnGround(false);
+        airborne.fallDistance = 5.0;
+
+        Cow grounded = spawnPlain(helper, EntityTypes.COW, POS.above());
+        grounded.setOnGround(true);
+        grounded.fallDistance = 0.0;
+
+        helper.assertTrue(StackKeyFactory.of(airborne).equals(StackKeyFactory.of(grounded)),
+                "OnGround and fall distance are transient physics state and must not block merging");
+        helper.succeed();
+    }
+
+    /**
+     * Task 4 review Finding 1/4: the old single {@code HurtByTimestamp} ignore-list
+     * entry matched nothing real; 26.2 instead writes {@code last_hurt_by_mob} plus
+     * {@code ticks_since_last_hurt_by_mob}, computed fresh on every save as {@code
+     * tickCount - lastHurtByMobTimestamp}. Left unignored, that value drifts by one on
+     * every tick that passes after a hit, so a mob that has ever been attacked by
+     * another mob could never again match a mob that has not - permanently, not just
+     * for a moment. This test reproduces exactly that: both cows get hit by the same
+     * attacker, but {@code hitLongAgo}'s clock is wound forward afterward so its
+     * "ticks since" value is a real, large, different number from {@code hitJustNow}'s
+     * zero - modelling two mobs hit at genuinely different moments in a running world,
+     * not merely "hit vs. never hit."
+     */
+    @GameTest
+    public void beingHitByAnotherMobAtDifferentTimesDoesNotBlockMerging(GameTestHelper helper) {
+        Zombie attacker = spawnPlain(helper, EntityTypes.ZOMBIE, POS.above().above());
+
+        Cow hitLongAgo = spawnPlain(helper, EntityTypes.COW, POS);
+        hitLongAgo.setLastHurtByMob(attacker);
+        hitLongAgo.tickCount += 100;
+
+        Cow hitJustNow = spawnPlain(helper, EntityTypes.COW, POS.above());
+        hitJustNow.setLastHurtByMob(attacker);
+
+        helper.assertTrue(hitLongAgo.tickCount != hitJustNow.tickCount,
+                "setup sanity check: the two hits must be recorded at different simulated ticks");
+        helper.assertTrue(StackKeyFactory.of(hitLongAgo).equals(StackKeyFactory.of(hitJustNow)),
+                "two mobs each hit by another mob at a different time must still share a stack key");
+        helper.succeed();
+    }
+
+    /**
+     * Task 4 review Finding 4: {@code StackKeyFactoryTest#everyIgnoredFieldIsStripped}
+     * can only prove {@code stripIgnored} removes strings that are already in {@code
+     * IGNORED_KEYS} - it puts each entry onto the tag itself, so a wrong key name is
+     * structurally invisible to it. This test instead serializes a real Cow through
+     * {@link StackKeyFactory#rawSerialize} - the same, un-stripped path {@code of} uses
+     * internally - and checks that every {@code IGNORED_KEYS} entry this Cow always
+     * writes unconditionally is actually present under that exact name. A future
+     * Minecraft update renaming one of these keys again fails loudly here instead of
+     * quietly turning back into a no-op.
+     *
+     * <p>Deliberately excluded below, each for a reason that is itself specific state
+     * this test does not set up:
+     * <ul>
+     *   <li>{@code LoveCause} - only written once the cow has been bred/fed.
+     *   <li>{@code CustomName}/{@code CustomNameVisible} - only written once the mob has
+     *       a custom name (and {@code StackEligibility.canStack} excludes named mobs
+     *       from stacking entirely regardless).
+     *   <li>{@code TicksFrozen} - only written once {@code getTicksFrozen() > 0}, i.e.
+     *       after standing in powder snow.
+     *   <li>{@code last_hurt_by_player}/{@code last_hurt_by_player_memory_time}/
+     *       {@code last_hurt_by_mob}/{@code ticks_since_last_hurt_by_mob} - only written
+     *       once the mob has been hit; covered instead by
+     *       {@link #beingHitByAnotherMobAtDifferentTimesDoesNotBlockMerging}, which is
+     *       the test that actually matters for this family (the bug was that the value
+     *       drifts, not merely that the key can be absent).
+     *   <li>{@code Sheared} - Sheep-specific; a Cow never writes it at all.
+     * </ul>
+     */
+    @GameTest
+    public void everyUnconditionalIgnoredKeyExistsInRealSerializedNbt(GameTestHelper helper) {
+        Cow cow = spawnPlain(helper, EntityTypes.COW, POS);
+        CompoundTag raw = StackKeyFactory.rawSerialize(cow);
+
+        List<String> unconditional = List.of(
+                "UUID", "Pos", "Motion", "Rotation", "OnGround", "fall_distance",
+                "HurtTime", "DeathTime", "Health", "Air", "Fire", "PortalCooldown",
+                "Brain", "Age", "ForcedAge", "InLove"
+        );
+        for (String key : unconditional) {
+            helper.assertTrue(StackKeyFactory.IGNORED_KEYS.contains(key),
+                    "'" + key + "' is missing from IGNORED_KEYS");
+            helper.assertTrue(raw.contains(key),
+                    "'" + key + "' was not found in a real serialized Cow - this IGNORED_KEYS entry may be stale");
+        }
         helper.succeed();
     }
 }
