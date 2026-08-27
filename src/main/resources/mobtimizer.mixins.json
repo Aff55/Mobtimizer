@@ -9,6 +9,7 @@
 		"EntityCollisionMixin",
 		"EntityTickMixin",
 		"FrozenAiMixin",
-		"FrozenDespawnMixin"
+		"FrozenDespawnMixin",
+		"FrozenFlagsMixin"
 	]
 }

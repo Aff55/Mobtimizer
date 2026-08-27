@@ -37,6 +37,7 @@ public final class DormancyGameTest {
         helper.assertTrue(Dormancy.isFrozen(member), "member should report frozen");
         helper.assertTrue(member.isSilent(), "frozen members must not make noise");
         helper.assertTrue(member.isInvisible(), "frozen members must not be rendered");
+        helper.assertTrue(member.isNoGravity(), "frozen members must not fall");
         helper.assertTrue(member.position().distanceTo(host.position()) < 0.001,
                 "frozen members are moved onto the host");
 
@@ -45,6 +46,7 @@ public final class DormancyGameTest {
         helper.assertFalse(Dormancy.isFrozen(member), "member should report thawed");
         helper.assertFalse(member.isInvisible(), "thawed members are visible again");
         helper.assertFalse(member.isSilent(), "thawed members make noise again");
+        helper.assertFalse(member.isNoGravity(), "thawed members are affected by gravity again");
 
         helper.succeed();
     }
@@ -202,15 +204,93 @@ public final class DormancyGameTest {
     }
 
     /**
+     * Pins the regression this task's fix-up was made for as an executable check,
+     * not a comment: {@code Dormancy.freeze} must never write {@code Silent} or
+     * {@code NoGravity} to NBT at all, so neither can possibly survive after this
+     * mod is removed. An earlier version of {@code Dormancy} called
+     * {@code setSilent(true)}/{@code setNoGravity(true)}, and disassembly of
+     * {@code Entity.saveWithoutId} showed both are conditionally written whenever
+     * true - meaning a member frozen (not thawed) at the moment of the last save
+     * kept both flags set in its NBT forever after the mod was removed. Freezing no
+     * longer touches either setter at all; {@link com.mobtimizer.mixin.FrozenFlagsMixin}
+     * makes the getters read {@code true} instead, computed fresh from the
+     * {@code FROZEN} attachment every call.
+     *
+     * <p>{@code Invisible} is asserted absent too, but for a different, unrelated
+     * reason, not because {@code Dormancy} stops setting it - it still calls
+     * {@code setInvisible(true)} deliberately (see {@code Dormancy}'s Javadoc).
+     * Disassembly of {@code Entity}/{@code LivingEntity}'s full save/load pipeline
+     * found no NBT key backing {@code Invisible} at all, under any name - vanilla
+     * itself never persists this flag, independent of anything this mod does. An
+     * earlier draft of this test wrongly asserted the opposite (that {@code
+     * Invisible} <em>would</em> be present, reasoning only from "the setter is still
+     * called") and failed against this real tag - corrected here to match what
+     * disassembly and this test both actually show, not what seemed to follow from
+     * the setter alone.
+     */
+    @GameTest
+    public void freezingNeverWritesSilentOrNoGravityToNbt(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, HOST_POS);
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, MEMBER_POS);
+        Dormancy.freeze(member, host);
+
+        ProblemReporter.Collector saveProblems = new ProblemReporter.Collector();
+        TagValueOutput output = TagValueOutput.createWithContext(saveProblems, member.level().registryAccess());
+        member.saveWithoutId(output);
+        CompoundTag tag = output.buildResult();
+        helper.assertTrue(saveProblems.isEmpty(), "serializing the frozen member should not report problems");
+
+        helper.assertFalse(tag.contains("Silent"),
+                "freezing must never write Silent to NBT - nothing must be left for the mod's removal to leave behind");
+        helper.assertFalse(tag.contains("NoGravity"),
+                "freezing must never write NoGravity to NBT - nothing must be left for the mod's removal to leave behind");
+        helper.assertFalse(tag.contains("Invisible"),
+                "Invisible has no NBT backing at all in vanilla, independent of Dormancy - setInvisible(true) is still "
+                        + "called, but nothing about that call is ever written to NBT under any key");
+
+        helper.succeed();
+    }
+
+    /**
+     * The other half of the same fix: a mob that happened to already be silent or
+     * gravity-less <em>before</em> being frozen, for some entirely unrelated reason,
+     * must read that way again after thawing - its real value was never touched, so
+     * there is nothing for {@code thaw} to have clobbered. This would fail against
+     * the old setter-based {@code Dormancy}, which unconditionally called
+     * {@code setSilent(false)}/{@code setNoGravity(false)} in {@code thaw} and would
+     * have silently overwritten a legitimate pre-existing {@code true}.
+     */
+    @GameTest
+    public void thawingDoesNotClobberAPreExistingSilentOrNoGravityValue(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, HOST_POS);
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, MEMBER_POS);
+        member.setSilent(true);
+        member.setNoGravity(true);
+
+        Dormancy.freeze(member, host);
+        helper.assertTrue(member.isSilent(), "a frozen member reads silent regardless of its own prior value");
+        helper.assertTrue(member.isNoGravity(), "a frozen member reads no-gravity regardless of its own prior value");
+
+        Dormancy.thaw(member);
+
+        helper.assertTrue(member.isSilent(),
+                "thaw must not clobber a Silent value that was already true before freezing - Dormancy never calls setSilent");
+        helper.assertTrue(member.isNoGravity(),
+                "thaw must not clobber a NoGravity value that was already true before freezing - Dormancy never calls setNoGravity");
+
+        helper.succeed();
+    }
+
+    /**
      * Answers the brief's own instruction to check what actually round-trips
-     * through save/load rather than assume. Disassembly of
-     * {@code Entity.saveWithoutId}/{@code load} shows {@code Silent} and
-     * {@code NoGravity} are conditionally written to and read from NBT whenever
-     * true, exactly like a persistent attachment - so they survive this round trip
-     * for the same reason the attachment does. {@code Invisible} has no NBT
-     * backing at all and does not survive even though the mod stays installed
-     * throughout this test; seeing that gap confirmed here, in a real save/load
-     * round trip, is more convincing than trusting the disassembly alone.
+     * through save/load rather than assume. {@code Silent}/{@code NoGravity} now
+     * read {@code true} again after a real reload for a completely different reason
+     * than before: not because either flag round-trips through NBT (they no longer
+     * do - see {@link #freezingNeverWritesSilentOrNoGravityToNbt}), but because
+     * {@code FrozenFlagsMixin} recomputes both from the {@code FROZEN} attachment,
+     * which does persist, on every call. {@code Invisible} still has no NBT backing
+     * at all and does not survive even though the mod stays installed throughout
+     * this test - unchanged by this task's fix-up, and still tracked as a follow-up.
      *
      * <p>The behavioural half of the requirement - a reloaded farm must not wake
      * every member at once - still holds even though {@code Invisible} does not
@@ -232,12 +312,13 @@ public final class DormancyGameTest {
         helper.assertTrue(saveProblems.isEmpty(), "serializing the frozen member should not report problems");
 
         // Overwrite live state first so the assertions below can only pass because
-        // load() actually restored it from the tag, exactly as
-        // MobStackAttachmentGameTest does for the STACK attachment.
+        // load() actually restored the FROZEN attachment from the tag, exactly as
+        // MobStackAttachmentGameTest does for the STACK attachment. Clobbering the
+        // attachment alone is enough for isSilent()/isNoGravity() too, now that
+        // FrozenFlagsMixin computes both from it rather than from separately-set
+        // vanilla state.
         member.setAttached(MobtimizerAttachments.FROZEN, Boolean.FALSE);
         member.setInvisible(false);
-        member.setSilent(false);
-        member.setNoGravity(false);
 
         ProblemReporter.Collector loadProblems = new ProblemReporter.Collector();
         ValueInput input = TagValueInput.create(loadProblems, member.level().registryAccess(), tag);
@@ -246,8 +327,8 @@ public final class DormancyGameTest {
 
         helper.assertTrue(Dormancy.isFrozen(member),
                 "the FROZEN attachment must survive a real save/load round trip - a reloaded farm must not wake every member at once");
-        helper.assertTrue(member.isSilent(), "Silent is written to NBT whenever true, so it round-trips");
-        helper.assertTrue(member.isNoGravity(), "NoGravity is written to NBT whenever true, so it round-trips");
+        helper.assertTrue(member.isSilent(), "isSilent() must read true again - FrozenFlagsMixin recomputes it from the reloaded FROZEN attachment");
+        helper.assertTrue(member.isNoGravity(), "isNoGravity() must read true again - FrozenFlagsMixin recomputes it from the reloaded FROZEN attachment");
         helper.assertFalse(member.isInvisible(),
                 "Invisible has no NBT backing at all, so it does NOT round-trip - a reloaded frozen member is "
                         + "briefly visible again until something re-applies Dormancy's visual state");
