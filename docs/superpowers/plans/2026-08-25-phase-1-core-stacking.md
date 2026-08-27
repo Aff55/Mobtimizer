@@ -1240,10 +1240,10 @@ public interface MemberStore {
 Members are real entities, so this needs a live level. Put it in the gametest source set created by `configureTests` (`src/gametest/java/...` — confirm the exact directory Loom generates).
 
 ```java
-package com.mobtimizer.stack;
+package com.mobtimizer.gametest;
 
 import com.mobtimizer.MobtimizerAttachments;
-import net.minecraft.gametest.framework.GameTest;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
@@ -1342,9 +1342,11 @@ public final class DormantStore implements MemberStore {
     @Override
     public List<Mob> takeAll(Mob host) {
         List<Mob> thawed = new ArrayList<>();
-        Mob next;
-        while ((next = takeOne(host)) != null) {
-            thawed.add(next);
+        while (size(host) > 0) {
+            Mob next = takeOne(host);
+            if (next != null) {
+                thawed.add(next);
+            }
         }
         return thawed;
     }
@@ -1361,7 +1363,17 @@ public final class DormantStore implements MemberStore {
 }
 ```
 
-Note `takeAll` loops on `takeOne` rather than returning early on null: `takeOne` returns null both for "empty" and for "that member's entity is gone", and in the latter case the id has already been removed, so the loop still terminates and skips the corpse correctly.
+`takeAll` loops on `size(host) > 0`, **not** on `takeOne(host) != null`. This matters and an
+earlier draft of this plan got it wrong.
+
+`takeOne` returns null for two different reasons: the store is empty, or that member's entity no
+longer exists (chunk trimmed, `/kill`, another mod). A `while ((next = takeOne(host)) != null)`
+loop cannot distinguish them — it simply **terminates** on the first vanished member. With
+members `[A(alive), B(vanished)]`, LIFO pops `B`, gets null, and exits, abandoning `A` in the
+attachment while it stays frozen and invisible in the world forever. An un-diagnosable leak.
+
+The size-based loop provably terminates because `takeOne` unconditionally shrinks the store by
+one on every non-empty call, whether or not the entity resolved. Proven by gametest in Task 6.
 
 - [ ] **Step 5: Write the `Dormancy` stub**
 
@@ -1446,9 +1458,9 @@ Persisting this matters: a frozen member must still be frozen after a save/load 
 - [ ] **Step 3: Write the failing gametest**
 
 ```java
-package com.mobtimizer.freeze;
+package com.mobtimizer.gametest;
 
-import net.minecraft.gametest.framework.GameTest;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
@@ -1669,9 +1681,9 @@ git commit -m "feat: dormancy with tick and collision suppression"
 - [ ] **Step 1: Write the failing gametest**
 
 ```java
-package com.mobtimizer.stack;
+package com.mobtimizer.gametest;
 
-import net.minecraft.gametest.framework.GameTest;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
@@ -1811,10 +1823,10 @@ git commit -m "feat: StackManager merge, split and unstack"
 The crowd gate is the behaviour most worth locking down — it is what keeps three pet cows from fusing.
 
 ```java
-package com.mobtimizer.merge;
+package com.mobtimizer.gametest;
 
 import com.mobtimizer.stack.StackManager;
-import net.minecraft.gametest.framework.GameTest;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
@@ -2042,10 +2054,10 @@ git commit -m "fix: issues found in first play-test"
 - [ ] **Step 1: Write the failing gametest**
 
 ```java
-package com.mobtimizer.display;
+package com.mobtimizer.gametest;
 
 import com.mobtimizer.stack.StackManager;
-import net.minecraft.gametest.framework.GameTest;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
@@ -2187,10 +2199,10 @@ Commands delivered: `/mobtimizer unstack all`, `/mobtimizer unstack here [radius
 - [ ] **Step 1: Write the failing gametest**
 
 ```java
-package com.mobtimizer.command;
+package com.mobtimizer.gametest;
 
 import com.mobtimizer.stack.StackManager;
-import net.minecraft.gametest.framework.GameTest;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
@@ -2441,10 +2453,10 @@ Persistence is the one property nothing so far proves, and it is the one most li
 - [ ] **Step 1: Write the persistence gametest**
 
 ```java
-package com.mobtimizer.stack;
+package com.mobtimizer.gametest;
 
 import com.mobtimizer.MobtimizerAttachments;
-import net.minecraft.gametest.framework.GameTest;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.EntityType;
