@@ -1,6 +1,7 @@
 package com.mobtimizer.freeze;
 
 import com.mobtimizer.MobtimizerAttachments;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.phys.Vec3;
 
@@ -63,16 +64,52 @@ import net.minecraft.world.phys.Vec3;
  * nothing left for a client to be told. {@code Invisible} has no such indirection:
  * the flag itself is the effect.
  *
- * <p>This leaves {@code Invisible} with the same narrow, already-documented residue
- * as before: a member frozen (not thawed) at the moment of the last save keeps
- * {@code Invisible} unset in a different way - it actually has the opposite problem,
- * since {@code Invisible} has no NBT backing at all and so does not even survive an
- * ordinary reload with the mod installed (a reloaded frozen member is briefly
- * visible again until something re-applies {@code setInvisible(true)}; tracked as a
- * follow-up, not fixed here). See the Task 7 report for the full analysis of both.
+ * <p><b>Correction to an earlier version of this Javadoc:</b> {@code Invisible} does
+ * <em>not</em> outlive the mod - it has no NBT backing at all (confirmed by disassembly
+ * of {@code Entity}'s full save/load pipeline: no string constant for it exists
+ * anywhere in that code, unlike {@code Silent}/{@code NoGravity}/{@code Glowing}/
+ * {@code Invulnerable}, which do), so nothing about it can be left behind after
+ * removal - there is simply nothing saved to leave behind. Combined with the
+ * Silent/NoGravity fix above, <b>nothing this mod sets survives its own removal.</b>
+ *
+ * <p>What {@code Invisible} having no NBT backing <em>does</em> cause is a different
+ * bug, during normal operation with the mod still installed: a frozen member comes
+ * back visible after an ordinary world reload, and - since a frozen member never
+ * ticks - nothing would otherwise notice and re-hide it. {@link #register} closes
+ * this by listening for {@link ServerEntityEvents#ENTITY_LOAD} and re-applying
+ * {@code setInvisible(true)} to any entity that loads back in already frozen.
  */
 public final class Dormancy {
     private Dormancy() {}
+
+    /**
+     * Wires up the load-time fix-up that keeps a frozen member hidden across a
+     * reload. Called once from {@code Mobtimizer.onInitialize()}.
+     *
+     * <p>{@code ServerEntityEvents.ENTITY_LOAD} lives in
+     * {@code net.fabricmc.fabric.api.event.lifecycle.v1} - not
+     * {@code net.fabricmc.fabric.api.entity.event.v1}, which has no such class - and
+     * is already on the classpath via this project's existing {@code fabric-api}
+     * dependency (fabric-lifecycle-events-v1), so this adds no new runtime
+     * dependency. Verified by disassembly, not assumed: its underlying Mixin injects
+     * at the {@code TAIL} of {@code ServerLevel$EntityCallbacks.onTrackingStart(Entity)}
+     * - the vanilla {@code LevelCallback} hook that fires whenever an entity (freshly
+     * spawned <em>or</em> reconstructed from a chunk's saved NBT - both go through the
+     * same {@code addFreshEntity}-style registration path) becomes eligible to be sent
+     * to nearby players. Also confirmed {@code onTrackingStart} does not itself
+     * synchronously send any per-player packets (it only registers the entity with
+     * {@code ServerChunkCache}/{@code ChunkMap}; the actual spawn/sync packets are
+     * built later, in {@code ChunkMap}'s own per-tick tracking pass), so this
+     * listener's {@code setInvisible(true)} call lands before any client could ever
+     * be told the entity is visible - not just soon after.
+     */
+    public static void register() {
+        ServerEntityEvents.ENTITY_LOAD.register((entity, level) -> {
+            if (entity instanceof Mob mob && isFrozen(mob)) {
+                mob.setInvisible(true);
+            }
+        });
+    }
 
     public static boolean isFrozen(Mob mob) {
         return mob.getAttachedOrElse(MobtimizerAttachments.FROZEN, Boolean.FALSE);
