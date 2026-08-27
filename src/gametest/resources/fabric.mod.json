@@ -11,7 +11,8 @@
 		"fabric-gametest": [
 			"com.mobtimizer.gametest.StackEligibilityGameTest",
 			"com.mobtimizer.gametest.StackKeyFactoryGameTest",
-			"com.mobtimizer.gametest.MobStackAttachmentGameTest"
+			"com.mobtimizer.gametest.MobStackAttachmentGameTest",
+			"com.mobtimizer.gametest.DormantStoreGameTest"
 		]
 	},
 	"depends": {

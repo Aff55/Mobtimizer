@@ -1,0 +1,173 @@
+package com.mobtimizer.gametest;
+
+import com.mobtimizer.MobtimizerAttachments;
+import com.mobtimizer.stack.DormantStore;
+import com.mobtimizer.stack.MobStack;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.cow.Cow;
+
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Exercises {@link DormantStore} against real spawned mobs.
+ *
+ * <p>Every method here mutates or reads real entity state - the {@code STACK}
+ * attachment, {@code Level#getEntity(UUID)} - none of which exists outside a live
+ * level, so this cannot be a plain unit test. There is deliberately no
+ * {@code DormantStoreTest} unit test alongside this one: with no mocking library in
+ * this project and no way to construct a real {@code Mob} outside a running level, a
+ * "unit" test here could only assert against fakes and would prove nothing about the
+ * real entity-manager behaviour this class exists to get right.
+ */
+public final class DormantStoreGameTest {
+    private static final BlockPos POS = new BlockPos(1, 2, 1);
+
+    @GameTest
+    public void addThenTakeOneRoundTrips(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+
+        DormantStore.INSTANCE.add(host, member);
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 1, "member should be stored");
+        helper.assertTrue(host.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).memberCount() == 2,
+                "host plus one member is a stack of 2");
+
+        Mob taken = DormantStore.INSTANCE.takeOne(host);
+        helper.assertTrue(taken == member, "takeOne should hand back the same member entity that was added");
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 0, "store should now be empty");
+        helper.assertTrue(DormantStore.INSTANCE.takeOne(host) == null, "empty store returns null");
+
+        helper.succeed();
+    }
+
+    @GameTest
+    public void freshHostHasAnEmptyStore(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 0,
+                "a host nothing has ever been added to must read as having no members");
+        helper.assertTrue(DormantStore.INSTANCE.takeOne(host) == null, "takeOne on an empty store returns null");
+        helper.assertTrue(DormantStore.INSTANCE.takeAll(host).isEmpty(),
+                "takeAll on an empty store returns an empty list, not null");
+
+        helper.succeed();
+    }
+
+    /**
+     * Design point: {@code takeOne} pops {@code MobStack.members().getLast()} off a
+     * first-insertion-order list, i.e. members come back LIFO, not FIFO. This pins that
+     * down directly so a future refactor toward {@code getFirst()} fails loudly here
+     * instead of only showing up as a subtle reordering nobody notices.
+     */
+    @GameTest
+    public void takeOneReturnsTheMostRecentlyAddedMemberFirst(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow first = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        Cow second = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above().above());
+
+        DormantStore.INSTANCE.add(host, first);
+        DormantStore.INSTANCE.add(host, second);
+
+        Mob taken = DormantStore.INSTANCE.takeOne(host);
+        helper.assertTrue(taken == second, "the most recently added member must come back first");
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 1, "the earlier member should remain in the store");
+
+        helper.succeed();
+    }
+
+    @GameTest
+    public void takeAllReturnsEveryMemberLifoAndEmptiesTheStore(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow first = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        Cow second = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above().above());
+
+        DormantStore.INSTANCE.add(host, first);
+        DormantStore.INSTANCE.add(host, second);
+
+        List<Mob> taken = DormantStore.INSTANCE.takeAll(host);
+
+        helper.assertTrue(taken.size() == 2, "both members should be returned");
+        helper.assertTrue(taken.get(0) == second, "takeAll drains LIFO: most recently added comes back first");
+        helper.assertTrue(taken.get(1) == first, "then the earlier-added member");
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 0, "the store must be empty after takeAll");
+        helper.assertTrue(host.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).memberCount() == 1,
+                "only the host remains once every member has been taken");
+
+        helper.succeed();
+    }
+
+    /**
+     * Design point: a member's entity can vanish out from under the store - chunk
+     * trimmed, {@code /kill}, another mod - without {@code DormantStore} ever being
+     * told. A synthetic UUID that was never spawned reproduces exactly the precondition
+     * that matters here (an id present in the attachment with nothing in the world
+     * behind it) fully deterministically, sidestepping any question of how or when a
+     * real removal becomes visible to {@code Level#getEntity} - {@code resolve} only
+     * ever consults that one lookup, so it cannot tell "never existed" apart from
+     * "existed and is now gone", and neither should this test need to.
+     *
+     * <p>{@code takeOne} must report this as "no member" (null) while also dropping the
+     * dead id from the attachment - not leave it stuck at the tail of the list forever,
+     * which would make every real member still behind it in the list permanently
+     * unreachable too, even though they still exist.
+     */
+    @GameTest
+    public void takeOneDropsAStaleIdAndReturnsNullWhenTheMemberEntityIsGone(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow real = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        UUID vanished = UUID.randomUUID();
+
+        DormantStore.INSTANCE.add(host, real);
+        host.setAttached(MobtimizerAttachments.STACK,
+                host.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).withMember(vanished));
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 2, "setup sanity check: two ids on record");
+
+        Mob takenForVanished = DormantStore.INSTANCE.takeOne(host);
+        helper.assertTrue(takenForVanished == null, "a member id with no backing entity must resolve to null, not throw");
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 1,
+                "the stale id must be dropped from the attachment even though nothing was returned for it");
+
+        Mob takenForReal = DormantStore.INSTANCE.takeOne(host);
+        helper.assertTrue(takenForReal == real,
+                "the still-real member that was behind the stale one in the list must still be reachable afterwards");
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 0, "store should now be empty");
+
+        helper.succeed();
+    }
+
+    /**
+     * Same precondition as {@link #takeOneDropsAStaleIdAndReturnsNullWhenTheMemberEntityIsGone},
+     * but through {@code takeAll}: this is the test that catches {@code takeAll}
+     * looping on {@code takeOne(host) != null} instead of on {@link DormantStore#size}.
+     * The vanished id sits at the tail (added last), so it is what the first internal
+     * {@code takeOne} call inside {@code takeAll} hits - a loop that stops the moment
+     * that call returns null would return an empty list here and leave the real member
+     * stranded in the store, still attached to {@code host} and never thawed. See
+     * {@link DormantStore#takeAll} for why the fix is a loop on {@code size}, not on
+     * {@code takeOne}'s return value.
+     */
+    @GameTest
+    public void takeAllSkipsAVanishedMemberAndStillReturnsTheRest(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow real = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        UUID vanished = UUID.randomUUID();
+
+        DormantStore.INSTANCE.add(host, real);
+        host.setAttached(MobtimizerAttachments.STACK,
+                host.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).withMember(vanished));
+
+        List<Mob> taken = DormantStore.INSTANCE.takeAll(host);
+
+        helper.assertTrue(taken.size() == 1, "the vanished id must not appear as a null entry or otherwise inflate the result");
+        helper.assertTrue(taken.get(0) == real, "the one real member must still come back");
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 0,
+                "takeAll must fully drain the store even with a stale id mixed in, not stop early on its null");
+
+        helper.succeed();
+    }
+}
