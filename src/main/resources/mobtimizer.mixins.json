@@ -5,5 +5,10 @@
 	"injectors": {
 		"defaultRequire": 1
 	},
-	"mixins": []
+	"mixins": [
+		"EntityCollisionMixin",
+		"EntityTickMixin",
+		"FrozenAiMixin",
+		"FrozenDespawnMixin"
+	]
 }
