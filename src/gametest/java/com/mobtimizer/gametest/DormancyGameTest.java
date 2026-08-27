@@ -9,7 +9,12 @@ import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityProcessor;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.level.storage.TagValueInput;
@@ -288,16 +293,25 @@ public final class DormancyGameTest {
      * than before: not because either flag round-trips through NBT (they no longer
      * do - see {@link #freezingNeverWritesSilentOrNoGravityToNbt}), but because
      * {@code FrozenFlagsMixin} recomputes both from the {@code FROZEN} attachment,
-     * which does persist, on every call. {@code Invisible} still has no NBT backing
-     * at all and does not survive even though the mod stays installed throughout
-     * this test - unchanged by this task's fix-up, and still tracked as a follow-up.
+     * which does persist, on every call.
+     *
+     * <p>This test calls {@code load(ValueInput)} directly on the same still-live
+     * entity object, the same way {@code MobStackAttachmentGameTest} does for the
+     * {@code STACK} attachment - deliberately, to isolate "does the NBT round trip
+     * restore the right in-memory state" from anything tracking/network-related.
+     * That direct call does not go through entity registration, so it does not fire
+     * {@code ServerEntityEvents.ENTITY_LOAD} and {@code isInvisible()} correctly
+     * still reads {@code false} here - {@link #frozenMemberStaysInvisibleAcrossARealReload}
+     * is the one that exercises the real path {@link Dormancy#register} fixes, by
+     * actually removing and reconstructing the entity the way a real chunk
+     * unload/reload does.
      *
      * <p>The behavioural half of the requirement - a reloaded farm must not wake
-     * every member at once - still holds even though {@code Invisible} does not
-     * round-trip: every Mixin here gates on {@link Dormancy#isFrozen}, which reads
-     * the attachment this test proves does survive, so a reloaded member stays
-     * non-ticking, non-pushable and non-despawning regardless. Only its visibility
-     * regresses.
+     * every member at once - already held before that fix, and still does: every
+     * Mixin here gates on {@link Dormancy#isFrozen}, which reads the attachment this
+     * test proves does survive, so a reloaded member stays non-ticking, non-pushable
+     * and non-despawning regardless of whether anything has re-applied its
+     * visibility yet.
      */
     @GameTest
     public void frozenAttachmentSurvivesSaveAndLoad(GameTestHelper helper) {
@@ -330,8 +344,9 @@ public final class DormancyGameTest {
         helper.assertTrue(member.isSilent(), "isSilent() must read true again - FrozenFlagsMixin recomputes it from the reloaded FROZEN attachment");
         helper.assertTrue(member.isNoGravity(), "isNoGravity() must read true again - FrozenFlagsMixin recomputes it from the reloaded FROZEN attachment");
         helper.assertFalse(member.isInvisible(),
-                "Invisible has no NBT backing at all, so it does NOT round-trip - a reloaded frozen member is "
-                        + "briefly visible again until something re-applies Dormancy's visual state");
+                "Invisible has no NBT backing at all, so a direct load() call does NOT restore it on its own - "
+                        + "see frozenMemberStaysInvisibleAcrossARealReload for the real entity-reload path, "
+                        + "where Dormancy.register()'s ENTITY_LOAD listener does restore it");
 
         helper.succeed();
     }
@@ -350,6 +365,117 @@ public final class DormancyGameTest {
 
         helper.assertTrue(member.position().distanceTo(host.position()) < 0.001,
                 "followHost must snap a frozen member back onto its host once it has wandered");
+
+        helper.succeed();
+    }
+
+    /**
+     * The real reload path {@code frozenAttachmentSurvivesSaveAndLoad} deliberately
+     * does not exercise: rather than calling {@code load()} directly on the
+     * still-live original entity, this discards it and reconstructs a fresh entity
+     * from its saved tag via {@code EntityType.loadEntityRecursive} - the same
+     * vanilla utility real chunk deserialization uses - then adds that fresh entity
+     * to the level with {@code addFreshEntity}, exactly as a real chunk reload would.
+     * A mock player positioned at the member confirms {@code onTrackingStart} (and so
+     * {@code ServerEntityEvents.ENTITY_LOAD}) actually fires - without a nearby
+     * player there would be nothing to broadcast to and this test would prove
+     * nothing.
+     *
+     * <p>Without {@link Dormancy#register}, this fails: the reconstructed entity's
+     * {@code FROZEN} attachment survives (proven separately), but {@code Invisible}
+     * does not, so it would read visible immediately after being added back to the
+     * level - the reload-visibility bug the coordinator's review identified.
+     */
+    @GameTest
+    @SuppressWarnings("removal")
+    public void frozenMemberStaysInvisibleAcrossARealReload(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, HOST_POS);
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, MEMBER_POS);
+        Dormancy.freeze(member, host);
+
+        ServerPlayer player = helper.makeMockServerPlayerInLevel();
+        player.snapTo(member.getX(), member.getY(), member.getZ(), 0.0f, 0.0f);
+
+        ProblemReporter.Collector saveProblems = new ProblemReporter.Collector();
+        TagValueOutput output = TagValueOutput.createWithContext(saveProblems, member.level().registryAccess());
+        member.saveWithoutId(output);
+        CompoundTag tag = output.buildResult();
+        helper.assertTrue(saveProblems.isEmpty(), "serializing the frozen member should not report problems");
+
+        member.discard();
+
+        ProblemReporter.Collector loadProblems = new ProblemReporter.Collector();
+        ValueInput input = TagValueInput.create(loadProblems, member.level().registryAccess(), tag);
+        // The explicit-EntityType overload is required here: saveWithoutId (as the
+        // name says) never writes the entity-type "id" key that the tag-only
+        // overload would need to read back, since a caller who already serialized
+        // this way already knows the type by construction.
+        Entity reconstructed = EntityType.loadEntityRecursive(
+                EntityTypes.COW, input, helper.getLevel(), EntitySpawnReason.LOAD, EntityProcessor.NOP);
+        helper.assertTrue(loadProblems.isEmpty(), "reconstructing the frozen member from its own tag should not report problems");
+        helper.assertTrue(reconstructed instanceof Mob, "setup sanity check: the reconstructed entity should be a Mob");
+
+        boolean added = helper.getLevel().addFreshEntity(reconstructed);
+        helper.assertTrue(added, "setup sanity check: the reconstructed member should be added to the level");
+        helper.assertTrue(Dormancy.isFrozen((Mob) reconstructed),
+                "setup sanity check: the reconstructed member's FROZEN attachment should have survived the round trip");
+
+        helper.assertTrue(reconstructed.isInvisible(),
+                "a frozen member reconstructed from disk and re-added to a level with a nearby player must be "
+                        + "invisible immediately - this is the reload-visibility bug ServerEntityEvents.ENTITY_LOAD fixes");
+
+        helper.succeed();
+    }
+
+    /**
+     * Calls {@code Entity.broadcastToPlayer(ServerPlayer)} directly - the exact
+     * method {@link com.mobtimizer.mixin.FrozenTrackingMixin} overrides - on both an
+     * ordinary host and a frozen member, matching how every other Mixin in this file
+     * is tested (direct production-method calls: {@code isPushable}, {@code
+     * checkDespawn}, {@code isSilent}, {@code isNoGravity}).
+     *
+     * <p>A {@code ChunkMap}-level version of this test was attempted first, asserting
+     * against {@code ChunkMap.isTrackedByAnyPlayer(Entity)} per the coordinator's
+     * suggestion, deferred a few ticks via {@code helper.runAfterDelay} to let a real
+     * {@code ChunkMap.tick()} run (that method is {@code protected} and cannot be
+     * invoked directly from a gametest). It failed even its own sanity check - the
+     * ordinary host never showed as tracked either - and a diagnostic pinned down
+     * why: {@code chunkMap.isChunkTracked(player, ...)} was {@code true} (the mock
+     * player's position does resolve to the right chunk) but
+     * {@code isTrackedByAnyPlayer} was {@code false} for both entities, meaning no
+     * {@code ChunkMap$TrackedEntity} was ever created for either one in the first
+     * place. {@code onTrackingStart} - and so {@code ChunkMap.addEntity} - fires from
+     * a chunk-tracking ticket that a real client establishes by reporting its view
+     * distance during login; {@code GameTestHelper.makeMockServerPlayerInLevel()}'s
+     * fake connection never goes through that exchange, so no such ticket exists to
+     * track against, regardless of how it's positioned. That same diagnostic's direct
+     * calls to {@code broadcastToPlayer} - {@code host}: {@code true}, frozen
+     * {@code member}: {@code false} - proved the Mixin's own logic is exactly
+     * correct; the harness's mock player is simply not capable of exercising the
+     * surrounding {@code ChunkMap} machinery end-to-end. Direct calls are therefore
+     * the correct level to test at here, not a fallback.
+     */
+    @GameTest
+    @SuppressWarnings("removal")
+    public void aFrozenMemberIsNotBroadcastToAnyPlayerInAggressiveMode(GameTestHelper helper) {
+        helper.assertTrue(ConfigManager.get().freeze.isAggressive(),
+                "setup sanity check: this test assumes the default AGGRESSIVE mode");
+
+        ServerPlayer player = helper.makeMockServerPlayerInLevel();
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, HOST_POS);
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, MEMBER_POS);
+
+        helper.assertTrue(host.broadcastToPlayer(player), "setup sanity check: an ordinary host must broadcast normally");
+        helper.assertTrue(member.broadcastToPlayer(player), "setup sanity check: an ordinary member must broadcast normally before freezing");
+
+        Dormancy.freeze(member, host);
+
+        helper.assertTrue(host.broadcastToPlayer(player), "the host itself is never frozen and must keep broadcasting normally");
+        helper.assertFalse(member.broadcastToPlayer(player),
+                "a frozen member must not be broadcast to any player in AGGRESSIVE mode");
+
+        Dormancy.thaw(member);
+        helper.assertTrue(member.broadcastToPlayer(player), "a thawed member must broadcast normally again");
 
         helper.succeed();
     }
