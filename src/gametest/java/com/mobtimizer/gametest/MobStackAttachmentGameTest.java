@@ -8,8 +8,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.util.ProblemReporter;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.level.storage.TagValueInput;
@@ -40,10 +38,6 @@ import java.util.UUID;
 public final class MobStackAttachmentGameTest {
     private static final BlockPos POS = new BlockPos(1, 2, 1);
 
-    private static <E extends Entity> E spawnPlain(GameTestHelper helper, EntityType<E> type, BlockPos pos) {
-        return helper.spawnEntity(type, pos).requirePersistence(false).spawn();
-    }
-
     /**
      * {@code AttachmentType.initializer()} is only realised by {@code
      * getAttachedOrCreate}/{@code getAttachedOrSet}, which also persist the created
@@ -55,7 +49,7 @@ public final class MobStackAttachmentGameTest {
      */
     @GameTest
     public void unsetAttachmentReadsAsAbsentNotTheInitializerDefault(GameTestHelper helper) {
-        Cow cow = spawnPlain(helper, EntityTypes.COW, POS);
+        Cow cow = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
 
         helper.assertTrue(cow.getAttached(MobtimizerAttachments.STACK) == null,
                 "a mob nothing has ever attached to should read as absent, not silently equal to the initializer's default");
@@ -66,7 +60,7 @@ public final class MobStackAttachmentGameTest {
 
     @GameTest
     public void stackAttachmentSurvivesSaveAndLoad(GameTestHelper helper) {
-        Cow cow = spawnPlain(helper, EntityTypes.COW, POS);
+        Cow cow = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
         MobStack original = MobStack.EMPTY
                 .withMember(UUID.randomUUID())
                 .withMember(UUID.randomUUID())
@@ -98,7 +92,7 @@ public final class MobStackAttachmentGameTest {
 
     @GameTest
     public void mobWithNoAttachmentSetRoundTripsWithoutManufacturingOne(GameTestHelper helper) {
-        Cow cow = spawnPlain(helper, EntityTypes.COW, POS);
+        Cow cow = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
 
         ProblemReporter.Collector saveProblems = new ProblemReporter.Collector();
         TagValueOutput output = TagValueOutput.createWithContext(saveProblems, cow.level().registryAccess());

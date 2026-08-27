@@ -7,8 +7,6 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.animal.cow.Cow;
@@ -33,19 +31,10 @@ import java.util.List;
 public final class StackKeyFactoryGameTest {
     private static final BlockPos POS = new BlockPos(1, 2, 1);
 
-    /**
-     * Every mob the convenience {@code GameTestHelper.spawn} methods create is marked
-     * persistence-required by default; going through the builder to turn that off keeps
-     * these mobs representative of ones that would actually reach the merge path.
-     */
-    private static <E extends Entity> E spawnPlain(GameTestHelper helper, EntityType<E> type, BlockPos pos) {
-        return helper.spawnEntity(type, pos).requirePersistence(false).spawn();
-    }
-
     @GameTest
     public void identicalMobsProduceEqualKeys(GameTestHelper helper) {
-        Zombie a = spawnPlain(helper, EntityTypes.ZOMBIE, POS);
-        Zombie b = spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
+        Zombie a = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS);
+        Zombie b = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
 
         helper.assertTrue(StackKeyFactory.of(a).equals(StackKeyFactory.of(b)),
                 "two plain zombies should share a stack key despite differing UUID and position");
@@ -54,8 +43,8 @@ public final class StackKeyFactoryGameTest {
 
     @GameTest
     public void armoredMobDiffersFromPlainMob(GameTestHelper helper) {
-        Zombie plain = spawnPlain(helper, EntityTypes.ZOMBIE, POS);
-        Zombie armored = spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
+        Zombie plain = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS);
+        Zombie armored = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
         armored.setItemSlot(EquipmentSlot.CHEST, new ItemStack(Items.DIAMOND_CHESTPLATE));
 
         helper.assertFalse(StackKeyFactory.of(plain).equals(StackKeyFactory.of(armored)),
@@ -77,10 +66,10 @@ public final class StackKeyFactoryGameTest {
                 .lookupOrThrow(Registries.ENCHANTMENT)
                 .getOrThrow(Enchantments.PROTECTION);
 
-        Zombie plain = spawnPlain(helper, EntityTypes.ZOMBIE, POS);
+        Zombie plain = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS);
         plain.setItemSlot(EquipmentSlot.CHEST, new ItemStack(Items.DIAMOND_CHESTPLATE));
 
-        Zombie enchanted = spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
+        Zombie enchanted = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
         ItemStack enchantedChestplate = new ItemStack(Items.DIAMOND_CHESTPLATE);
         enchantedChestplate.enchant(protection, 1);
         enchanted.setItemSlot(EquipmentSlot.CHEST, enchantedChestplate);
@@ -112,12 +101,12 @@ public final class StackKeyFactoryGameTest {
                 .lookupOrThrow(Registries.ENCHANTMENT)
                 .getOrThrow(Enchantments.FIRE_PROTECTION);
 
-        Zombie withProtection = spawnPlain(helper, EntityTypes.ZOMBIE, POS);
+        Zombie withProtection = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS);
         ItemStack protectionChestplate = new ItemStack(Items.DIAMOND_CHESTPLATE);
         protectionChestplate.enchant(protection, 1);
         withProtection.setItemSlot(EquipmentSlot.CHEST, protectionChestplate);
 
-        Zombie withFireProtection = spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
+        Zombie withFireProtection = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
         ItemStack fireProtectionChestplate = new ItemStack(Items.DIAMOND_CHESTPLATE);
         fireProtectionChestplate.enchant(fireProtection, 1);
         withFireProtection.setItemSlot(EquipmentSlot.CHEST, fireProtectionChestplate);
@@ -129,8 +118,8 @@ public final class StackKeyFactoryGameTest {
 
     @GameTest
     public void damagedMobStillMatchesFullHealthMob(GameTestHelper helper) {
-        Cow full = spawnPlain(helper, EntityTypes.COW, POS);
-        Cow damaged = spawnPlain(helper, EntityTypes.COW, POS.above());
+        Cow full = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow damaged = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
         damaged.setHealth(1.0f);
 
         helper.assertTrue(StackKeyFactory.of(full).equals(StackKeyFactory.of(damaged)),
@@ -149,11 +138,11 @@ public final class StackKeyFactoryGameTest {
      */
     @GameTest
     public void transientPhysicsStateDoesNotBlockMerging(GameTestHelper helper) {
-        Cow airborne = spawnPlain(helper, EntityTypes.COW, POS);
+        Cow airborne = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
         airborne.setOnGround(false);
         airborne.fallDistance = 5.0;
 
-        Cow grounded = spawnPlain(helper, EntityTypes.COW, POS.above());
+        Cow grounded = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
         grounded.setOnGround(true);
         grounded.fallDistance = 0.0;
 
@@ -177,13 +166,13 @@ public final class StackKeyFactoryGameTest {
      */
     @GameTest
     public void beingHitByAnotherMobAtDifferentTimesDoesNotBlockMerging(GameTestHelper helper) {
-        Zombie attacker = spawnPlain(helper, EntityTypes.ZOMBIE, POS.above().above());
+        Zombie attacker = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS.above().above());
 
-        Cow hitLongAgo = spawnPlain(helper, EntityTypes.COW, POS);
+        Cow hitLongAgo = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
         hitLongAgo.setLastHurtByMob(attacker);
         hitLongAgo.tickCount += 100;
 
-        Cow hitJustNow = spawnPlain(helper, EntityTypes.COW, POS.above());
+        Cow hitJustNow = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
         hitJustNow.setLastHurtByMob(attacker);
 
         helper.assertTrue(hitLongAgo.tickCount != hitJustNow.tickCount,
@@ -224,7 +213,7 @@ public final class StackKeyFactoryGameTest {
      */
     @GameTest
     public void everyUnconditionalIgnoredKeyExistsInRealSerializedNbt(GameTestHelper helper) {
-        Cow cow = spawnPlain(helper, EntityTypes.COW, POS);
+        Cow cow = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
         CompoundTag raw = StackKeyFactory.rawSerialize(cow);
 
         List<String> unconditional = List.of(
