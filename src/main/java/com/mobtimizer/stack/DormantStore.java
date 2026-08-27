@@ -1,9 +1,11 @@
 package com.mobtimizer.stack;
 
+import com.mobtimizer.Mobtimizer;
 import com.mobtimizer.MobtimizerAttachments;
 import com.mobtimizer.freeze.Dormancy;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import org.jetbrains.annotations.Nullable;
 
@@ -17,6 +19,21 @@ import java.util.UUID;
  * <p>This is why removing the mod is survivable: the members are ordinary
  * entities in the save file, so with the freeze Mixins no longer running they
  * simply wake up.
+ *
+ * <p><b>Known limitation:</b> {@code resolve} (backing both {@link #takeOne} and
+ * {@link #takeAll}) can only ask {@code Level#getEntity(UUID)} whether a member's
+ * entity is currently resident in memory. That lookup is backed by
+ * {@code PersistentEntitySectionManager}'s in-memory {@code EntityLookup}, which is
+ * populated and emptied as chunks load and unload - it has no way to distinguish "this
+ * entity's chunk is merely unloaded right now" from "this entity is permanently gone".
+ * A member whose chunk has simply unloaded therefore resolves exactly like one that
+ * was actually destroyed: its id is silently dropped and nothing is returned for it,
+ * even though the entity itself is still fully intact on disk. This class cannot fix
+ * that from inside these methods - correctness here depends on members staying loaded
+ * and co-located with their host so the two cases never have to be told apart in
+ * practice. Keeping that true is Task 7's responsibility (freezing co-locates a member
+ * with its host and suppresses its natural despawn) and Task 9's (periodic
+ * re-co-location), not this store's.
  */
 public final class DormantStore implements MemberStore {
     public static final DormantStore INSTANCE = new DormantStore();
@@ -28,8 +45,42 @@ public final class DormantStore implements MemberStore {
         return stackOf(host).members().size();
     }
 
+    /**
+     * Refuses two of {@link MemberStore#add}'s three documented preconditions rather
+     * than trusting the caller: adding a host to itself, and adding a mob that is
+     * itself already a stack host (which would orphan that mob's own members
+     * permanently, since nothing ever revisits a frozen member's own attachment). Both
+     * are logged at {@code ERROR} and leave every attachment untouched - refusing
+     * loudly gets the diagnostic value of a caller bug without letting an exception
+     * out of merge orchestration, which runs on the server thread and cannot afford to
+     * take the server down over it.
+     *
+     * <p>The third precondition - {@code member} already belongs to a <em>different</em>
+     * host - is not checked here. Detecting it cheaply would require an index over
+     * every host's member list, which does not exist and is not worth building for
+     * this; it stays a documented caller responsibility only, per
+     * {@link MemberStore#add}.
+     */
     @Override
     public void add(Mob host, Mob member) {
+        if (member.getUUID().equals(host.getUUID())) {
+            Mobtimizer.LOGGER.error(
+                    "Refusing to stack {} ({}) as a member of itself",
+                    EntityType.getKey(host.getType()), host.getUUID());
+            return;
+        }
+
+        MobStack memberOwnStack = stackOf(member);
+        if (!memberOwnStack.members().isEmpty()) {
+            Mobtimizer.LOGGER.error(
+                    "Refusing to add {} ({}) to {} ({})'s stack: it is itself a stack host "
+                            + "with {} member(s) of its own that would be orphaned",
+                    EntityType.getKey(member.getType()), member.getUUID(),
+                    EntityType.getKey(host.getType()), host.getUUID(),
+                    memberOwnStack.members().size());
+            return;
+        }
+
         Dormancy.freeze(member, host);
         host.setAttached(MobtimizerAttachments.STACK, stackOf(host).withMember(member.getUUID()));
     }
@@ -59,8 +110,12 @@ public final class DormantStore implements MemberStore {
 
         Mob member = resolve(host, id);
         if (member == null) {
-            // The entity vanished (chunk trimmed, /kill, another mod). Dropping the
-            // stale id and reporting nothing is correct: the member no longer exists.
+            // The entity is unresolvable: its chunk is unloaded, it despawned
+            // naturally, the chunk was trimmed, it was killed, or another mod removed
+            // it. Dropping the stale id and reporting nothing is correct for every case
+            // where the entity is actually gone - but resolve() cannot tell "merely
+            // unloaded" apart from "gone" (see the class Javadoc), so this path is only
+            // truly safe as long as members stay loaded and co-located with their host.
             return null;
         }
         Dormancy.thaw(member);

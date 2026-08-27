@@ -170,4 +170,53 @@ public final class DormantStoreGameTest {
 
         helper.succeed();
     }
+
+    /**
+     * Guards a real misuse path from {@link com.mobtimizer.stack.MemberStore#add}'s
+     * documented preconditions: {@code add(host, host)} would otherwise insert the
+     * host's own UUID into its own member list, and a later {@code takeOne} would
+     * resolve that id straight back to {@code host} and call
+     * {@code Dormancy.thaw(host)} on it. {@code DormantStore} refuses this rather than
+     * trusting the caller; this pins down that the refusal leaves the store exactly as
+     * it was, not partially applied.
+     */
+    @GameTest
+    public void addRefusesToAddAHostAsItsOwnMemberAndLeavesTheStoreUnchanged(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+
+        DormantStore.INSTANCE.add(host, host);
+
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 0,
+                "a refused self-add must not change the store's size");
+        helper.assertTrue(host.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).memberCount() == 1,
+                "a refused self-add must leave the host as a stack of only itself");
+
+        helper.succeed();
+    }
+
+    /**
+     * Guards the other cheaply-detectable misuse path from
+     * {@link com.mobtimizer.stack.MemberStore#add}'s preconditions: adding a mob that
+     * is itself already a stack host would freeze it as someone else's member and
+     * orphan its own members permanently, since nothing ever revisits a frozen
+     * member's own attachment afterward. Confirms the refusal touches neither the
+     * target host's store nor the would-be member's own, pre-existing one.
+     */
+    @GameTest
+    public void addRefusesAMemberThatIsItselfAStackHostAndLeavesBothStoresUnchanged(GameTestHelper helper) {
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow busyHost = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        Cow itsOwnMember = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above().above());
+        DormantStore.INSTANCE.add(busyHost, itsOwnMember);
+        helper.assertTrue(DormantStore.INSTANCE.size(busyHost) == 1, "setup sanity check: busyHost already has a member");
+
+        DormantStore.INSTANCE.add(host, busyHost);
+
+        helper.assertTrue(DormantStore.INSTANCE.size(host) == 0,
+                "refusing to add a mob that is itself a stack host must not change the target host's size");
+        helper.assertTrue(DormantStore.INSTANCE.size(busyHost) == 1,
+                "busyHost's own member list must be untouched by the refused add");
+
+        helper.succeed();
+    }
 }
