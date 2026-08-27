@@ -1549,6 +1549,31 @@ public final class Dormancy {
 
 Note `setNoAi` is deliberately **not** used. It is a persisted vanilla flag, and if the mod were removed every member would stay AI-less forever — exactly the failure mode dormant storage exists to avoid. Freezing must live entirely in mod-owned state and Mixins so that removing the mod removes the freeze.
 
+#### Required: keep frozen members loaded and alive
+
+Task 6's review established that `Level.getEntity(UUID)` resolves through `EntityLookup.byUuid`,
+a map that `PersistentEntitySectionManager` empties on chunk unload. **A frozen member in an
+unloaded chunk is indistinguishable from a destroyed one**, and `DormantStore.takeOne` then drops
+its id unconditionally — orphaning an intact, invisible mob forever with no error.
+
+Two things must hold for the dormant store to be correct, and this task owns both:
+
+1. **Members stay co-located with their host**, so they load and unload together. `freeze` already
+   moves the member onto the host; `Dormancy.followHost` (called from Task 9's scanner) maintains
+   it as the host wanders. Entities at the same position occupy the same chunk section, so this is
+   what keeps them loaded together.
+2. **Frozen members must not despawn naturally.** Hostile mobs despawn when far from players, and
+   a despawned member is silently lost from the count.
+
+**Do not use `Mob.setPersistenceRequired()` for point 2.** It is a one-way persisted vanilla flag
+with no public unsetter, so thawing could not restore the original value and removing the mod
+would leave every former member permanently non-despawning — the same failure `setNoAi` is
+rejected for. Instead add a Mixin cancelling the despawn check for frozen members, alongside the
+tick and collision Mixins. Mod-owned behaviour disappears cleanly when the mod does.
+
+Verify the current despawn entry point against the jar before writing it — `Mob.checkDespawn()`
+and `Mob.removeWhenFarAway(double)` are the likely targets, but confirm rather than assume.
+
 - [ ] **Step 6: Write the tick Mixin**
 
 Replace `ServerLevel`/`tickNonPassenger` with what you confirmed in Step 1.
