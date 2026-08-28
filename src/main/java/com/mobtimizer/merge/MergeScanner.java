@@ -38,9 +38,11 @@ import java.util.UUID;
  *
  * <p><b>The crowd gate is the feature, not an optimisation.</b> {@link #mergeAround}
  * only merges once a host's same-kind, eligible, unstacked, unfrozen neighbours within
- * {@code merge.radius} - plus the host itself - number at least {@code
- * merge.crowdThreshold}. Below that, mobs are left completely untouched: a couple of
- * pet animals standing near each other must never fuse.
+ * {@code merge.radius} - plus the host itself - together represent at least {@code
+ * merge.crowdThreshold} mobs. Below that, mobs are left completely untouched: a couple
+ * of pet animals standing near each other must never fuse. The host's own contribution
+ * is weighed by its true size ({@link StackManager#countOf}), not counted as a flat 1 -
+ * see {@link #mergeAround}'s own Javadoc for why that matters.
  */
 public final class MergeScanner {
     /**
@@ -112,6 +114,17 @@ public final class MergeScanner {
      * ineligible neighbours can never silently burn through {@code maxMergesPerScan}
      * while accomplishing nothing.
      *
+     * <p><b>The host's own contribution is weighed by its true size, not a flat 1.</b>
+     * An existing multi-member host is itself only one <em>entity</em> nearby a fresh
+     * candidate's crowd query, but it represents however many mobs {@link
+     * StackManager#countOf} reports - a lone new arrival standing next to an existing
+     * 50-cow host is a crowd of 51, not "the host (1) plus the newcomer (1) = 2". A flat
+     * {@code + 1} for the host would silently refuse to grow an already-formed stack one
+     * mob at a time, which matters on any farm where mobs mature individually rather
+     * than crowding in all at once. {@code matches} itself does not need the same
+     * treatment yet: it is still filtered to unstacked neighbours only, so every entry
+     * represents exactly one mob and {@code matches.size()} is already accurate.
+     *
      * <p>{@code remainingBudget} bounds how many of this crowd's members are actually
      * merged in this one call, independent of the crowd-threshold decision above, which
      * always looks at the crowd's true size rather than a budget-truncated one - whether
@@ -140,8 +153,8 @@ public final class MergeScanner {
             matches.add(other);
         }
 
-        // +1 counts the host itself towards the crowd.
-        if (matches.size() + 1 < config.merge.crowdThreshold) return 0;
+        int crowdSize = StackManager.countOf(host) + matches.size();
+        if (crowdSize < config.merge.crowdThreshold) return 0;
 
         int merged = 0;
         for (Mob other : matches) {

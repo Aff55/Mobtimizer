@@ -332,6 +332,49 @@ public class MergeScannerGameTest {
     }
 
     /**
+     * Post-approval review of Task 9 traced a real design gap: the crowd check counted
+     * an existing host as a flat {@code 1} regardless of its true size, so a single
+     * loose mob wandering next to an already-formed 4-member host would read the crowd
+     * as only {@code 1 (host) + 1 (newcomer) = 2}, well under the default threshold of
+     * 4, and never merge - even though the farm obviously already has plenty of crowd.
+     * Fixed by weighing the host with {@link StackManager#countOf} instead of a flat
+     * {@code 1}. Order-independent by construction: only one other root entity exists
+     * here (the pre-built host, hiding its three frozen members; the newcomer), so
+     * regardless of which one the scanner elects as the surviving host, the single
+     * available match always fully absorbs the other - see this class's Javadoc for why
+     * a single-match crowd can never be ambiguous about how much merges, only about
+     * which side ends up as host.
+     */
+    @GameTest
+    public void looseMobIsAbsorbedByAnExistingMultiMemberHostThroughTheScanner(GameTestHelper helper) {
+        int originalInterval = ConfigManager.get().merge.scanIntervalTicks;
+        try {
+            ConfigManager.get().merge.scanIntervalTicks = 1;
+
+            Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+            Cow memberA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 2));
+            Cow memberB = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 3));
+            Cow memberC = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1));
+            helper.assertTrue(StackManager.merge(host, memberA), "setup sanity check");
+            helper.assertTrue(StackManager.merge(host, memberB), "setup sanity check");
+            helper.assertTrue(StackManager.merge(host, memberC), "setup sanity check");
+            helper.assertTrue(StackManager.countOf(host) == 4, "setup sanity check: host is already a stack of 4");
+
+            Cow newcomer = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 2));
+
+            MergeScanner.tick(helper.getLevel());
+
+            helper.assertTrue(maxCountAmong(host, memberA, memberB, memberC, newcomer) == 5,
+                    "a single loose mob must be absorbed by an existing 4-member host - the crowd check must count "
+                            + "the host's true size (4), not a flat 1, or this crowd wrongly reads as only 2 and "
+                            + "never merges");
+        } finally {
+            ConfigManager.get().merge.scanIntervalTicks = originalInterval;
+        }
+        helper.succeed();
+    }
+
+    /**
      * Order-independent alternative to checking one named mob's own count - see this
      * class's Javadoc for why that matters. Exactly one mob in a merged crowd reads the
      * full count (the one the scanner happened to choose as host); every other member
