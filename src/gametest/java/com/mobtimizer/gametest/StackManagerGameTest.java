@@ -1,5 +1,6 @@
 package com.mobtimizer.gametest;
 
+import com.mobtimizer.freeze.Dormancy;
 import com.mobtimizer.stack.StackManager;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
@@ -100,22 +101,72 @@ public final class StackManagerGameTest {
     }
 
     /**
-     * Pins the phase-1 "never merge a stack into a stack" rule the brief calls out by
-     * name: the scanner is expected to only ever offer loose mobs as {@code member}, so
-     * this never arises in normal play, but {@code StackManager} is the entry point that
-     * has to hold the line if it ever is called that way regardless.
+     * Formerly {@code stackIntoStackIsRefused}, pinning the phase-1 "never merge a
+     * stack into a stack" rule. A post-approval review of Task 9 traced a real design
+     * gap that rule caused: a farm's stacks could then only ever grow by simultaneous
+     * crowding, so on a breeding farm - where mobs mature one at a time - separate
+     * stacks would accumulate forever instead of consolidating, undercutting the mod's
+     * whole purpose. The human ruled to fix it: stack-to-stack merging is now allowed,
+     * transferring the absorbed stack's members onto the new host first (see {@link
+     * StackManager#merge}'s Javadoc) so {@link com.mobtimizer.stack.DormantStore#add}'s
+     * own "member must not itself be a stack host" guard - which exists to prevent
+     * orphaning sub-members and must stay intact - is satisfied honestly rather than
+     * relaxed. This test now pins the corrected behaviour: hostA (a stack of 2) merges
+     * into hostB successfully, and hostA's own former member ends up under hostB, not
+     * abandoned under the now-empty hostA.
      */
     @GameTest
-    public void stackIntoStackIsRefused(GameTestHelper helper) {
+    public void stackMergingIntoALooseHostTransfersItsMemberAndSucceeds(GameTestHelper helper) {
         Cow hostA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
         Cow memberOfA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1));
         helper.assertTrue(StackManager.merge(hostA, memberOfA), "setup sanity check: hostA should gain a member");
 
         Cow hostB = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 3));
-        helper.assertFalse(StackManager.merge(hostB, hostA),
-                "hostA is already a stack of 2 and must not be folded into hostB as a single member");
-        helper.assertTrue(StackManager.countOf(hostB) == 1, "hostB must be unaffected by the refused merge");
-        helper.assertTrue(StackManager.countOf(hostA) == 2, "hostA's own stack must be untouched");
+        helper.assertTrue(StackManager.merge(hostB, hostA),
+                "hostA (a stack of 2) must be absorbable into hostB, transferring its member rather than being refused");
+
+        helper.assertTrue(StackManager.countOf(hostB) == 3,
+                "hostB must now represent all three cows: itself, hostA, and hostA's former member");
+        helper.assertTrue(StackManager.countOf(hostA) == 1,
+                "hostA must read as an ordinary stack of only itself now - its own member list was drained, not left behind");
+        helper.assertTrue(Dormancy.isFrozen(hostA), "hostA itself is now a frozen member of hostB");
+        helper.assertTrue(Dormancy.isFrozen(memberOfA), "hostA's former member must still be frozen, now under hostB");
+        helper.assertTrue(memberOfA.position().distanceTo(hostB.position()) < 0.001,
+                "hostA's transferred former member must be co-located with its new host, hostB, not left at hostA's old position");
+
+        helper.succeed();
+    }
+
+    /**
+     * The other half of the fix: both sides of the merge are already multi-member
+     * stacks, not just one. Total mob count must be conserved across the merge - five
+     * cows before, five cows represented by hostB afterwards - proving {@code
+     * transferMembers} moves every one of hostA's members, not just the first.
+     */
+    @GameTest
+    public void twoMultiMemberStacksMergeWithConservedTotalCount(GameTestHelper helper) {
+        Cow hostB = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+        Cow itsOwnMember = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 2));
+        helper.assertTrue(StackManager.merge(hostB, itsOwnMember), "setup sanity check: hostB should gain a member");
+        helper.assertTrue(StackManager.countOf(hostB) == 2, "setup sanity check: hostB is a stack of 2");
+
+        Cow hostA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 1));
+        Cow memberA1 = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 2));
+        Cow memberA2 = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(3, 2, 3));
+        helper.assertTrue(StackManager.merge(hostA, memberA1), "setup sanity check: hostA should gain its first member");
+        helper.assertTrue(StackManager.merge(hostA, memberA2), "setup sanity check: hostA should gain its second member");
+        helper.assertTrue(StackManager.countOf(hostA) == 3, "setup sanity check: hostA is a stack of 3");
+
+        helper.assertTrue(StackManager.merge(hostB, hostA), "two multi-member stacks must be mergeable");
+
+        helper.assertTrue(StackManager.countOf(hostB) == 5,
+                "hostB must now represent all five cows (its original 2 plus hostA's original 3)");
+        helper.assertTrue(StackManager.countOf(hostA) == 1, "hostA must read as drained down to just itself");
+        helper.assertTrue(memberA1.position().distanceTo(hostB.position()) < 0.001,
+                "hostA's first former member must be co-located with the new host");
+        helper.assertTrue(memberA2.position().distanceTo(hostB.position()) < 0.001,
+                "hostA's second former member must be co-located with the new host too, not just the first one transferred");
+
         helper.succeed();
     }
 

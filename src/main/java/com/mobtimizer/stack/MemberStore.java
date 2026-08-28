@@ -58,4 +58,38 @@ public interface MemberStore {
 
     /** Removes and thaws every member. Used by unstack. */
     List<Mob> takeAll(Mob host);
+
+    /**
+     * Moves every member of {@code from}'s own stack directly onto {@code to},
+     * preserving their frozen, co-located state rather than releasing them - this is
+     * "re-parent," not "unstack then re-add." Used when one stack host is being folded
+     * into another as an ordinary member (stack-to-stack merging).
+     *
+     * <p><b>Existing precondition still applies, and this method is what makes it hold
+     * for the stack-to-stack case.</b> {@link #add}'s documented precondition that
+     * {@code member} must not itself be a stack host exists specifically to prevent
+     * orphaning that mob's own sub-members - nothing ever revisits a frozen member's
+     * own attachment afterward, so freezing a still-populated host as someone else's
+     * member would strand its members permanently. That guard must stay intact and
+     * meaningful, not be relaxed: this method is the caller's tool for legitimately
+     * satisfying it. A caller merging one stack host into another must call this first,
+     * draining {@code from} down to zero members, so that {@code from} genuinely has no
+     * members of its own by the time it is itself passed to {@link #add} as an ordinary
+     * member - at which point {@code add}'s guard sees an empty list and passes
+     * normally, exactly as it would for a mob that was never a host at all.
+     *
+     * <p>Each transferred member is individually removed from {@code from}'s attachment
+     * before being added to {@code to}'s (not read once as a whole and cleared in bulk
+     * afterward), so that at every point during this call each id is registered under
+     * at most one host - never both, and only briefly neither (between the two writes
+     * for that one id, which nothing else can observe mid-call since everything here
+     * runs synchronously on the server thread).
+     *
+     * <p>A member id that no longer resolves to a live entity (its chunk merely
+     * unloaded, or it is genuinely gone) is dropped rather than transferred - the same
+     * accepted, self-healing behaviour {@link #takeOne} already has for exactly this
+     * case, and the same reason: {@code Level#getEntity(UUID)} cannot tell "unloaded"
+     * from "gone", and this store has no way to fix that from inside a single call.
+     */
+    void transferMembers(Mob from, Mob to);
 }

@@ -3,6 +3,7 @@ package com.mobtimizer.gametest;
 import com.mobtimizer.MobtimizerAttachments;
 import com.mobtimizer.stack.DormantStore;
 import com.mobtimizer.stack.MobStack;
+import com.mobtimizer.stack.StackManager;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -217,6 +218,78 @@ public final class DormantStoreGameTest {
                 "refusing to add a mob that is itself a stack host must not change the target host's size");
         helper.assertTrue(DormantStore.INSTANCE.size(busyHost) == 1,
                 "busyHost's own member list must be untouched by the refused add");
+
+        helper.succeed();
+    }
+
+    /**
+     * Task 9's fix round added stack-to-stack merging to {@link
+     * com.mobtimizer.stack.StackManager#merge}, which now drains an absorbed stack's
+     * members onto the new host via {@link #transferMembers} <em>before</em> calling
+     * {@link #add} - specifically so that add's guard above is never asked to look the
+     * other way. This confirms that guard is not just theoretically still present but
+     * still actually load-bearing: a caller that skips the transfer step and calls
+     * {@code add} directly with a still-populated host as the member - exactly what
+     * {@code StackManager.merge} no longer does, but nothing about {@code add} itself
+     * prevents a different caller from trying - is still refused. Builds {@code
+     * busyHost}'s stack through the real {@code StackManager.merge} path (not a direct
+     * {@code add} call), tying this directly to the new capability rather than testing
+     * {@code add} in isolation from it.
+     */
+    @GameTest
+    public void addStillRefusesAStackHostAsAMemberEvenThoughMergeNowSupportsStackToStack(GameTestHelper helper) {
+        Cow busyHost = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow itsOwnMember = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        StackManager.merge(busyHost, itsOwnMember);
+        helper.assertTrue(DormantStore.INSTANCE.size(busyHost) == 1,
+                "setup sanity check: busyHost has a member via the real merge path");
+
+        Cow newHost = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above().above());
+        helper.assertFalse(DormantStore.INSTANCE.add(newHost, busyHost),
+                "add() itself must still refuse a still-populated stack host as a member, even now that merge() "
+                        + "supports absorbing one - by calling transferMembers first, not by relaxing this guard");
+        helper.assertTrue(DormantStore.INSTANCE.size(newHost) == 0,
+                "the refused direct add must not change newHost's size");
+        helper.assertTrue(DormantStore.INSTANCE.size(busyHost) == 1,
+                "busyHost's own member list must be untouched by the refused direct add");
+
+        helper.succeed();
+    }
+
+    /**
+     * Mirrors {@link #takeOneDropsAStaleIdAndReturnsNullWhenTheMemberEntityIsGone} for
+     * the new {@link #transferMembers}: a member id that no longer resolves to a live
+     * entity (chunk trimmed, {@code /kill}, another mod) must not corrupt the transfer
+     * or throw. It is dropped - the same accepted, self-healing behaviour {@code
+     * takeOne} already has - while every other, still-resolvable member is still moved
+     * onto the new host correctly. Answers, with a real test rather than analysis
+     * alone, one of the ordering-under-failure questions raised in review: can a member
+     * end up owned by neither host, or by both, if something goes wrong mid-transfer?
+     * Here: owned by neither (the vanished id is gone from both attachments
+     * afterwards) - never both, since {@link #transferMembers} removes each id from
+     * {@code from} before it is ever added to {@code to}, one id at a time, rather than
+     * reading {@code from}'s whole list once and clearing it in bulk at the end.
+     */
+    @GameTest
+    public void transferMembersDropsAVanishedMemberAndStillMovesTheRest(GameTestHelper helper) {
+        Cow from = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow real = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        UUID vanished = UUID.randomUUID();
+
+        DormantStore.INSTANCE.add(from, real);
+        from.setAttached(MobtimizerAttachments.STACK,
+                from.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).withMember(vanished));
+        helper.assertTrue(DormantStore.INSTANCE.size(from) == 2, "setup sanity check: two ids on record before transfer");
+
+        Cow to = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above().above());
+        DormantStore.INSTANCE.transferMembers(from, to);
+
+        helper.assertTrue(DormantStore.INSTANCE.size(from) == 0,
+                "from must end up fully drained - the vanished id must not be left behind either");
+        helper.assertTrue(DormantStore.INSTANCE.size(to) == 1,
+                "the vanished id must not inflate to's count - only the one real member should have moved");
+        helper.assertTrue(to.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).members().contains(real.getUUID()),
+                "the real member must actually be the one that moved to `to`");
 
         helper.succeed();
     }

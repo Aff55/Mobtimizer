@@ -37,12 +37,12 @@ import java.util.UUID;
  * its own call here.
  *
  * <p><b>The crowd gate is the feature, not an optimisation.</b> {@link #mergeAround}
- * only merges once a host's same-kind, eligible, unstacked, unfrozen neighbours within
- * {@code merge.radius} - plus the host itself - together represent at least {@code
+ * only merges once a host's same-kind, eligible, unfrozen neighbours within {@code
+ * merge.radius} - plus the host itself - together represent at least {@code
  * merge.crowdThreshold} mobs. Below that, mobs are left completely untouched: a couple
- * of pet animals standing near each other must never fuse. The host's own contribution
- * is weighed by its true size ({@link StackManager#countOf}), not counted as a flat 1 -
- * see {@link #mergeAround}'s own Javadoc for why that matters.
+ * of pet animals standing near each other must never fuse. "Represent" matters: a
+ * neighbour that is itself an existing stack host counts by its true size ({@link
+ * StackManager#countOf}), not as one entity - see {@link #mergeAround}'s own Javadoc.
  */
 public final class MergeScanner {
     /**
@@ -108,36 +108,54 @@ public final class MergeScanner {
     /**
      * Merges eligible neighbours into {@code host}, but only once enough of them are
      * present. Below the crowd threshold mobs are left completely vanilla, so a few pet
-     * animals never fuse. Returns how many merges actually succeeded, which is what the
-     * caller's budget accounting must subtract - not how many were attempted, since
-     * {@link StackManager#merge} can refuse - so a crowd of already-claimed or otherwise
-     * ineligible neighbours can never silently burn through {@code maxMergesPerScan}
-     * while accomplishing nothing.
+     * animals never fuse. Returns how many mobs actually moved - not how many merge
+     * calls succeeded - which is what the caller's budget accounting must subtract; see
+     * "Budget accounting" below for why the two differ.
      *
-     * <p><b>The host's own contribution is weighed by its true size, not a flat 1.</b>
-     * An existing multi-member host is itself only one <em>entity</em> nearby a fresh
-     * candidate's crowd query, but it represents however many mobs {@link
-     * StackManager#countOf} reports - a lone new arrival standing next to an existing
-     * 50-cow host is a crowd of 51, not "the host (1) plus the newcomer (1) = 2". A flat
-     * {@code + 1} for the host would silently refuse to grow an already-formed stack one
-     * mob at a time, which matters on any farm where mobs mature individually rather
-     * than crowding in all at once. {@code matches} itself does not need the same
-     * treatment yet: it is still filtered to unstacked neighbours only, so every entry
-     * represents exactly one mob and {@code matches.size()} is already accurate.
+     * <p><b>Crowd size counts true mob totals, not entity-list length.</b> {@code
+     * matches} is allowed to contain other stack hosts, not only loose mobs - {@link
+     * StackManager#merge} now supports stack-to-stack merging (see its own Javadoc), so
+     * this scanner must not artificially exclude them the way phase 1 originally did
+     * via an {@code isStacked} filter here. That means a plain {@code matches.size()},
+     * or a flat {@code + 1} for the host, would under-count: a nearby stack of 50 would
+     * count as "1 entity" towards the threshold even though it represents 50 mobs, and
+     * an existing 50-mob host itself would count as "1" even though a single arriving
+     * loose mob should obviously be absorbed by it. Both {@code host} and every entry in
+     * {@code matches} are therefore weighed by {@link StackManager#countOf} - the mob's
+     * true represented size - not counted as one apiece. A crowd of three loose pet cows
+     * still reads as 3 and stays vanilla; an existing 50-cow stack plus one arriving cow
+     * reads as 51 and absorbs it - the gate is unchanged for the case it exists to
+     * protect, and now also correct for the cases it previously missed.
      *
-     * <p>{@code remainingBudget} bounds how many of this crowd's members are actually
-     * merged in this one call, independent of the crowd-threshold decision above, which
+     * <p><b>Budget accounting.</b> {@code remainingBudget} bounds how many mobs actually
+     * move in this one call, independent of the crowd-threshold decision above, which
      * always looks at the crowd's true size rather than a budget-truncated one - whether
      * a crowd counts as "crowded enough to start merging" has nothing to do with how
      * much of this scan's budget happens to be left by the time the outer loop reaches
-     * it. Without this cap, a single oversized crowd - exactly the case this mod exists
-     * for, a farm with far more same-kind mobs packed inside one {@code merge.radius}
-     * than {@code maxMergesPerScan} - would merge every eligible neighbour in one call
-     * regardless of the budget the outer loop is tracking, making {@code
-     * maxMergesPerScan} bound nothing for the one scenario it matters most for. Any
-     * crowd members left over once the cap is hit are simply picked up on a later scan;
-     * nothing about them is lost or marked, since they remain ordinary unmerged mobs
-     * until they actually merge.
+     * it. Each candidate's weight - {@link StackManager#countOf} again, read <em>before</em>
+     * attempting the merge - is what gets added to {@code merged} on success, not a flat
+     * {@code 1}: a stack-to-stack merge that folds 50 mobs into {@code host} in one
+     * {@link StackManager#merge} call does 50 mobs' worth of mutation (50 attachment
+     * writes and position snaps via {@code DormantStore.transferMembers}, not 1), and
+     * charging it as "1" would let {@code maxMergesPerScan} bound nothing for exactly
+     * the case - a farm consolidating several already-formed stacks - this fix exists
+     * to make possible. A single absorption is not itself pre-emptively skipped for
+     * being larger than the remaining budget, though (the loop below only checks budget
+     * <em>before</em> each attempt, never mid-attempt): a stack transfer is atomic, so
+     * there is no meaningful way to do "part" of one, and letting the one absorption
+     * that discovers a large stack complete - even if it drives the running total well
+     * past {@code remainingBudget} - is preferable to either refusing it outright or
+     * leaving it half-transferred. Once it completes, the resulting deep overshoot
+     * correctly stops every further merge this scan, both here (the loop's own {@code
+     * merged >= remainingBudget} check) and in the caller ({@code tick}'s {@code budget
+     * <= 0} check, which already tolerates a negative budget the same way).
+     *
+     * <p>Weighting {@code merged} by successes' true size, rather than counting attempts
+     * or counting flat successes, is what keeps this correct: a crowd of already-claimed
+     * or otherwise ineligible neighbours can never silently burn through {@code
+     * maxMergesPerScan} while accomplishing nothing, since {@link StackManager#merge}
+     * can refuse and refusals contribute {@code 0} regardless of the refused mob's own
+     * size.
      */
     private static int mergeAround(Mob host, MobtimizerConfig config, int remainingBudget) {
         StackKey key = StackKeyFactory.of(host);
@@ -147,19 +165,22 @@ public final class MergeScanner {
         for (Mob other : host.level().getEntities(EntityTypeTest.forClass(Mob.class), box, o -> o != host)) {
             if (other.getType() != host.getType()) continue;
             if (Dormancy.isFrozen(other)) continue;
-            if (StackManager.isStacked(other)) continue;
             if (!StackEligibility.canStack(other)) continue;
             if (!StackKeyFactory.of(other).equals(key)) continue;
             matches.add(other);
         }
 
-        int crowdSize = StackManager.countOf(host) + matches.size();
+        int crowdSize = StackManager.countOf(host);
+        for (Mob other : matches) {
+            crowdSize += StackManager.countOf(other);
+        }
         if (crowdSize < config.merge.crowdThreshold) return 0;
 
         int merged = 0;
         for (Mob other : matches) {
             if (merged >= remainingBudget) break;
-            if (StackManager.merge(host, other)) merged++;
+            int weight = StackManager.countOf(other);
+            if (StackManager.merge(host, other)) merged += weight;
         }
         return merged;
     }

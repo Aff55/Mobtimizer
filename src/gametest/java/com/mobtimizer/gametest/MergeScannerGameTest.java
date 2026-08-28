@@ -11,6 +11,8 @@ import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.cow.Cow;
 
+import java.util.List;
+
 /**
  * Exercises {@link MergeScanner} against real spawned mobs and a real {@code
  * ServerLevel}.
@@ -368,6 +370,140 @@ public class MergeScannerGameTest {
                     "a single loose mob must be absorbed by an existing 4-member host - the crowd check must count "
                             + "the host's true size (4), not a flat 1, or this crowd wrongly reads as only 2 and "
                             + "never merges");
+        } finally {
+            ConfigManager.get().merge.scanIntervalTicks = originalInterval;
+        }
+        helper.succeed();
+    }
+
+    /**
+     * The other ordering the same review traced: two independently-formed 2-cow stacks
+     * standing near each other. Each is a single *entity* to the other's crowd query
+     * (its own member is frozen and invisible to it), so an un-weighted {@code
+     * matches.size()} would read this crowd as {@code 1 (host) + 1 (other stack,
+     * counted as one entity) = 2} - well under threshold - even though the two stacks
+     * together represent 4 real mobs. Fixed by weighing every entry in {@code matches}
+     * by {@link StackManager#countOf} too, not just the host - see {@link
+     * com.mobtimizer.merge.MergeScanner#mergeAround}'s Javadoc. Order-independent for
+     * the same single-match reason as {@link
+     * #looseMobIsAbsorbedByAnExistingMultiMemberHostThroughTheScanner}.
+     */
+    @GameTest
+    public void twoIndependentlyFormedStacksCombineThroughTheScannerByTrueWeight(GameTestHelper helper) {
+        int originalInterval = ConfigManager.get().merge.scanIntervalTicks;
+        try {
+            ConfigManager.get().merge.scanIntervalTicks = 1;
+
+            Cow hostA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+            Cow memberA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 2));
+            helper.assertTrue(StackManager.merge(hostA, memberA), "setup sanity check");
+
+            Cow hostB = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1));
+            Cow memberB = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 2));
+            helper.assertTrue(StackManager.merge(hostB, memberB), "setup sanity check");
+
+            MergeScanner.tick(helper.getLevel());
+
+            helper.assertTrue(maxCountAmong(hostA, memberA, hostB, memberB) == 4,
+                    "two independently-formed 2-cow stacks standing near each other must combine into one stack of "
+                            + "4 - counting entities instead of true represented size would read this crowd as only "
+                            + "2 and refuse to merge");
+        } finally {
+            ConfigManager.get().merge.scanIntervalTicks = originalInterval;
+        }
+        helper.succeed();
+    }
+
+    /**
+     * Three separately-formed 2-cow stacks (true weight 2 each), budget lowered to
+     * exactly 2 - chosen so the result is deterministic regardless of which stack the
+     * scanner elects as host or in what order it considers the other two, unlike a
+     * two-stack version of this test would be. Weighted accounting: the very first
+     * absorption (weight 2) exactly exhausts the budget, blocking the second regardless
+     * of which one went first - by symmetry, every one of the three has the same
+     * weight, so exactly one of the two non-host stacks ever gets absorbed, no matter
+     * which stack ends up hosting or which order its matches are visited in. That
+     * leaves the host at a true size of 4 and the third, un-absorbed stack untouched at
+     * 2 - a maximum count of 4 among all six mobs, always.
+     *
+     * <p>Flat accounting (counting successful merge *calls*, not their size) would
+     * instead always let both absorptions through: a budget of "2" comfortably covers 2
+     * successful calls regardless of their individual weight, leaving the host at 6 and
+     * nothing untouched. The two schemes are cleanly distinguishable here with no
+     * dependency on iteration order.
+     */
+    @GameTest
+    public void stackToStackMergeChargesItsTrueWeightAgainstTheBudget(GameTestHelper helper) {
+        int originalInterval = ConfigManager.get().merge.scanIntervalTicks;
+        int originalBudget = ConfigManager.get().merge.maxMergesPerScan;
+        try {
+            ConfigManager.get().merge.scanIntervalTicks = 1;
+            ConfigManager.get().merge.maxMergesPerScan = 2;
+
+            Cow hostA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+            Cow memberA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 2));
+            helper.assertTrue(StackManager.merge(hostA, memberA), "setup sanity check");
+
+            Cow hostB = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1));
+            Cow memberB = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 2));
+            helper.assertTrue(StackManager.merge(hostB, memberB), "setup sanity check");
+
+            Cow hostC = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 3));
+            Cow memberC = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 3));
+            helper.assertTrue(StackManager.merge(hostC, memberC), "setup sanity check");
+
+            MergeScanner.tick(helper.getLevel());
+
+            int total = maxCountAmong(hostA, memberA, hostB, memberB, hostC, memberC);
+            helper.assertTrue(total == 4,
+                    "a budget of 2 must be exactly exhausted by absorbing one 2-cow stack (true weight 2), blocking "
+                            + "a second absorption of equal size regardless of order - if this reads 6, both "
+                            + "absorptions went through, meaning the budget was charged flat successes (\"2 calls\") "
+                            + "rather than each merge's true size");
+        } finally {
+            ConfigManager.get().merge.scanIntervalTicks = originalInterval;
+            ConfigManager.get().merge.maxMergesPerScan = originalBudget;
+        }
+        helper.succeed();
+    }
+
+    /**
+     * The coordinator's explicit "verify rather than assume": a stack-to-stack
+     * absorption's transferred sub-members are already frozen and co-located with
+     * their <em>old</em> host at the moment they move to the new one. This confirms
+     * they end up co-located with the new host too, through the real scanner entry
+     * point - {@code keepMembersWithHosts} runs unconditionally at the end of every
+     * {@code tick()} that scans at all, after the merge loop, so it picks up a
+     * same-scan transfer's freshly-updated membership immediately, not a scan later.
+     * Order-independent: whichever of hostA/hostB the scanner elects as the surviving
+     * host, every other mob in the crowd - including hostA's own former members,
+     * transferred as part of the absorption - must end up next to it.
+     */
+    @GameTest
+    public void transferredMembersFollowTheirNewHostAfterAScannerDrivenAbsorption(GameTestHelper helper) {
+        int originalInterval = ConfigManager.get().merge.scanIntervalTicks;
+        try {
+            ConfigManager.get().merge.scanIntervalTicks = 1;
+
+            Cow hostA = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+            Cow memberA1 = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 2));
+            Cow memberA2 = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 3));
+            helper.assertTrue(StackManager.merge(hostA, memberA1), "setup sanity check");
+            helper.assertTrue(StackManager.merge(hostA, memberA2), "setup sanity check");
+
+            Cow hostB = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(2, 2, 1));
+
+            MergeScanner.tick(helper.getLevel());
+
+            helper.assertTrue(maxCountAmong(hostA, hostB) == 4, "setup sanity check: the merge must have happened");
+
+            Mob winner = StackManager.countOf(hostA) > 1 ? hostA : hostB;
+            for (Mob mob : List.of(hostA, hostB, memberA1, memberA2)) {
+                if (mob == winner) continue;
+                helper.assertTrue(mob.position().distanceTo(winner.position()) < 0.001,
+                        "every absorbed mob, including a transferred sub-member, must be co-located with the final "
+                                + "host after a scanner-driven absorption");
+            }
         } finally {
             ConfigManager.get().merge.scanIntervalTicks = originalInterval;
         }

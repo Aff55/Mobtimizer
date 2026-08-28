@@ -159,6 +159,39 @@ public final class DormantStore implements MemberStore {
         return thawed;
     }
 
+    /**
+     * Re-parents every member of {@code from} onto {@code to} one at a time: remove
+     * from {@code from}'s attachment, resolve, then {@link #add} to {@code to} - never
+     * read {@code from}'s whole list once and clear it in bulk afterward. That ordering
+     * is what keeps each id registered under at most one host at every point during
+     * this call, including if something unexpected interrupted the loop partway: the
+     * ids already processed are cleanly under {@code to} only, the ids not yet reached
+     * are still cleanly under {@code from} only - never both. See {@link
+     * MemberStore#transferMembers} for the full contract, in particular why the caller
+     * must run this before folding {@code from} itself in as an ordinary member.
+     *
+     * <p>Reuses {@link #add} rather than writing {@code to}'s attachment directly, so a
+     * transferred member goes through the exact same freeze/position-snap path as a
+     * freshly-added one (its {@code add}-time guards cannot fire here: a transferred
+     * member is by construction a plain frozen mob with an empty member list of its
+     * own, never itself a host, so {@code add} always succeeds and needs no separate
+     * error handling beyond what it already logs internally on the paths that cannot be
+     * reached from here).
+     */
+    @Override
+    public void transferMembers(Mob from, Mob to) {
+        for (UUID id : stackOf(from).members()) {
+            from.setAttached(MobtimizerAttachments.STACK, stackOf(from).withoutMember(id));
+
+            Mob transferred = resolve(from, id);
+            if (transferred != null) {
+                add(to, transferred);
+            }
+            // else: unresolvable (chunk unloaded / already gone) - dropped, same
+            // accepted limitation as takeOne above; see MemberStore#transferMembers.
+        }
+    }
+
     private static MobStack stackOf(Mob host) {
         return host.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY);
     }

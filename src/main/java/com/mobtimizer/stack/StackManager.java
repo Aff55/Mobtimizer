@@ -23,27 +23,40 @@ public final class StackManager {
     /**
      * Folds {@code member} into {@code host}. Returns false if they are not compatible.
      *
-     * <p><b>Guard consistency with {@link DormantStore#add}.</b> That store defends
-     * two of {@link MemberStore#add}'s three documented preconditions itself - self-add
-     * and member-is-itself-a-host - by refusing and logging ERROR rather than mutating
-     * anything. This method's own checks are not merely similar to those two guards,
-     * they are exactly equivalent to them: {@code host == member} is the same fact
-     * {@code add} re-derives via UUID equality (two distinct live {@code Mob} instances
-     * never share a UUID), and {@link #isStacked}{@code (member)} - {@code
-     * countOf(member) > 1} - is true if and only if {@code member}'s own {@code STACK}
-     * attachment has a non-empty member list, which is precisely {@code add}'s
-     * member-is-a-host check. So whenever this method reaches the {@code
-     * DormantStore.INSTANCE.add} call below, neither of the store's guards can fire:
-     * the mutation always actually happens today.
+     * <p><b>{@code member} may itself already be a stack host - stack-to-stack merging
+     * is allowed,</b> not refused as phase 1 originally shipped it. A flat refusal here
+     * meant a farm's stacks could only ever grow by simultaneous crowding: a single mob
+     * maturing into eligibility next to an already-formed stack could never join it (it
+     * has nothing to crowd with - the existing stack's own members are already frozen
+     * and invisible to a fresh crowd count), and two independently-formed stacks could
+     * never combine even standing right next to each other. When {@code member} is
+     * itself a host, this method transfers its members onto {@code host} first via
+     * {@link DormantStore#transferMembers}, <em>before</em> {@code member} itself is
+     * added to {@code host} as an ordinary member below.
      *
-     * <p>That equivalence is proven, not assumed - but it is still a fact about
-     * <em>today's</em> two guards, maintained by two call sites agreeing, not by the
-     * compiler. Rather than lean on it forever, this method propagates {@code add}'s own
-     * return value instead of hardcoding {@code true} once it decides to attempt the
-     * mutation: if the store's guards are ever extended independently of this method (as
-     * they already were once, in Task 6's own fix round), a caller here starts getting an
-     * honest {@code false} automatically, not a return value that silently drifts out of
-     * sync with what the store actually did.
+     * <p><b>That ordering is what keeps {@link DormantStore#add}'s "member must not
+     * itself be a stack host" guard intact and meaningful, rather than relaxing it.</b>
+     * That guard exists specifically to prevent orphaning a still-populated host's
+     * sub-members - nothing ever revisits a frozen member's own attachment again, so
+     * freezing a busy host as someone else's member would strand its members
+     * permanently. Draining first means that by the time {@code add} runs below,
+     * {@code member}'s own list is genuinely, verifiably empty: {@code add}'s guard
+     * sees exactly the same "not a stack host" mob it would see for a plain loose
+     * member, and passes normally rather than needing to be told to look the other way.
+     *
+     * <p><b>Guard consistency with {@code add}, updated for the above.</b> {@code host
+     * == member} is still exactly equivalent to add's self-add guard (two distinct live
+     * {@code Mob} instances never share a UUID). The member-is-itself-a-host guard is no
+     * longer made unreachable by an equivalent refusal here (there is no such refusal
+     * any more); instead it is satisfied by construction, since the transfer above
+     * always empties {@code member}'s list before {@code add} is reached. Either way,
+     * neither of the store's two guards can fire when called from here today - but that
+     * remains a fact about how this method is written, not one the compiler enforces,
+     * which is why it still propagates {@code add}'s own return value below instead of
+     * hardcoding {@code true}: if the store's guards are ever extended independently of
+     * this method (as they already were once, in Task 6's own fix round), or if this
+     * method's own ordering is ever changed carelessly, a caller here starts getting an
+     * honest {@code false} automatically rather than a stale {@code true}.
      *
      * <p>The third precondition - {@code member} must not already belong to some
      * <em>other</em> host - is explicitly left unenforced at the store, per {@link
@@ -51,26 +64,30 @@ public final class StackManager {
      * every host's member list, which does not exist. It costs nothing extra here,
      * though: {@link Dormancy#isFrozen} is an O(1) read of the mover's own attachment,
      * and in this codebase the only writers of that attachment are {@code
-     * DormantStore.add} (sets it) and {@code takeOne}/{@code takeAll} (clear it) - so a
-     * mob reads frozen if and only if some host currently claims it, without needing to
-     * know which one. Skipping this check would let an already-claimed member get
-     * re-added under a second host: {@code add} has no guard against it (both of its
-     * checks read {@code member}'s own {@code STACK} attachment, which a plain frozen
-     * member never has), so the second host's {@code withMember} would happily insert
-     * the same UUID again - now double-booked, with both hosts' own {@code takeOne}/
-     * {@code takeAll} eventually resolving and thawing the same live entity
-     * independently. The identical check on {@code host} additionally refuses to let an
-     * already-claimed mob be (mis)used as a brand-new host, which would silently create
-     * a "stack" that can never do anything with its own members: a frozen mob never
-     * ticks (the freeze Mixins gate on {@link Dormancy#isFrozen}), so it could never
-     * run whatever future scanner or combat logic a real host needs to run.
+     * DormantStore.add} (sets it) and {@code takeOne}/{@code takeAll}/{@code
+     * transferMembers} (clear it) - so a mob reads frozen if and only if some host
+     * currently claims it, without needing to know which one. Skipping this check would
+     * let an already-claimed member get re-added under a second host: {@code add} has no
+     * guard against it (both of its checks read {@code member}'s own {@code STACK}
+     * attachment, which a plain frozen member never has), so the second host's
+     * {@code withMember} would happily insert the same UUID again - now double-booked.
+     * The identical check on {@code host} additionally refuses to let an already-claimed
+     * mob be (mis)used as a brand-new host. Both halves of this check keep working
+     * unchanged for the stack-to-stack case: a host - however many members it has - is
+     * by definition never itself frozen, and a frozen mob is by definition never itself
+     * a host with members to transfer, so "is this mob frozen" and "is this mob a stack
+     * host" never overlap for the same mob and there is nothing here for the
+     * stack-to-stack path to interact badly with.
      */
     public static boolean merge(Mob host, Mob member) {
         if (host == member) return false;
         if (!StackEligibility.canStack(host) || !StackEligibility.canStack(member)) return false;
-        if (isStacked(member)) return false; // never merge a stack into a stack in phase 1
         if (Dormancy.isFrozen(host) || Dormancy.isFrozen(member)) return false; // already claimed elsewhere
         if (!StackKeyFactory.of(host).equals(StackKeyFactory.of(member))) return false;
+
+        if (isStacked(member)) {
+            DormantStore.INSTANCE.transferMembers(member, host);
+        }
 
         boolean added = DormantStore.INSTANCE.add(host, member);
         StackNameplate.refresh(host);
