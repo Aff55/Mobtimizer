@@ -13,7 +13,8 @@
 			"com.mobtimizer.gametest.StackKeyFactoryGameTest",
 			"com.mobtimizer.gametest.MobStackAttachmentGameTest",
 			"com.mobtimizer.gametest.DormantStoreGameTest",
-			"com.mobtimizer.gametest.DormancyGameTest"
+			"com.mobtimizer.gametest.DormancyGameTest",
+			"com.mobtimizer.gametest.StackManagerGameTest"
 		]
 	},
 	"depends": {

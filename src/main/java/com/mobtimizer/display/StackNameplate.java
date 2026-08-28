@@ -9,4 +9,7 @@ public final class StackNameplate {
     public static boolean isModOwnedName(Mob mob) {
         return false;
     }
+
+    /** Filled in properly in Task 11. */
+    public static void refresh(Mob host) {}
 }
