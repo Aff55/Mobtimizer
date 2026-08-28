@@ -37,26 +37,10 @@ public final class StackKeyFactory {
      * drifts on every tick - a mob that has ever been hit by another mob must still be
      * able to merge, so this pair has to be ignored, not just its stale predecessor.
      *
-     * <p><b>{@code fabric:attachments}</b> was added once {@code StackManager} (Task 8)
-     * became the first code to call {@link #of} on a mob that already had one of this
-     * mod's own attachments explicitly set. Confirmed empirically, not guessed: a freshly
-     * spawned mob's raw serialized tag has no such key at all, but the same mob's tag
-     * gains a top-level {@code "fabric:attachments":{"mobtimizer:stack":{members:[...]}}}
-     * entry the instant {@code DormantStore.add} calls {@code setAttached} on it, even for
-     * a single member - Fabric's attachment API persists every attachment an entity has an
-     * explicit (non-default) value for under this one shared compound, keyed by each
-     * attachment's own id. Left unignored, this silently capped every stack at exactly two
-     * mobs: the moment a host gains its first member, that {@code setAttached} call makes
-     * {@code fabric:attachments} appear in the host's own NBT, and since a plain,
-     * never-merged mob never has that key, every later merge attempt into that same host
-     * would then compare unequal and be refused - regardless of species, variant or
-     * config - which defeats the mod's entire reason to exist. This mod's own {@code
-     * STACK}/{@code FROZEN} attachments are exactly the kind of "the stack owns this going
-     * forward" bookkeeping this list already exists to exclude, the same reasoning as
-     * {@code CustomName}/{@code CustomNameVisible} for the nameplate; ignoring the whole
-     * shared key also covers any other mod's own attachments for the same reason, rather
-     * than naming this mod's two individually and leaving every other mod's attachments to
-     * reintroduce the identical cap.
+     * <p><b>{@code fabric:attachments} is handled separately from this flat list</b> - see
+     * {@link #FABRIC_ATTACHMENTS_KEY} and {@link #stripOwnAttachments} below - because it
+     * needs surgery inside a nested compound, not a top-level removal. It is not named
+     * here.
      */
     public static final Set<String> IGNORED_KEYS = Set.of(
             "UUID", "Pos", "Motion", "Rotation", "OnGround", "fall_distance",
@@ -64,8 +48,21 @@ public final class StackKeyFactory {
             "last_hurt_by_mob", "ticks_since_last_hurt_by_mob", "DeathTime", "Health",
             "Air", "Fire", "PortalCooldown", "TicksFrozen", "Brain",
             "Age", "ForcedAge", "InLove", "LoveCause", "Sheared",
-            "CustomName", "CustomNameVisible", "fabric:attachments"
+            "CustomName", "CustomNameVisible"
     );
+
+    /**
+     * The nested compound Fabric's attachment API persists every mod's persistent
+     * attachments under, keyed inside by each attachment's own id (e.g. {@code
+     * mobtimizer:stack}). Confirmed by disassembly of {@code
+     * AttachmentSerializingImpl.serializeAttachmentData} in {@code
+     * fabric-data-attachment-api-v1} (wired into {@code Entity.saveWithoutId} via a
+     * Mixin), and independently by diffing a plain mob's raw serialized tag against the
+     * same mob's tag right after it gains its first stack member: the key is entirely
+     * absent until then. See {@link #stripOwnAttachments} for why this cannot just be
+     * added to {@link #IGNORED_KEYS} as a flat entry.
+     */
+    public static final String FABRIC_ATTACHMENTS_KEY = "fabric:attachments";
 
     private StackKeyFactory() {}
 
@@ -136,12 +133,72 @@ public final class StackKeyFactory {
         return full;
     }
 
-    /** Visible for testing. */
+    /**
+     * Visible for testing. Strips every flat {@link #IGNORED_KEYS} entry, then narrows
+     * {@link #FABRIC_ATTACHMENTS_KEY} down to this mod's own entries via
+     * {@link #stripOwnAttachments}.
+     */
     public static CompoundTag stripIgnored(CompoundTag tag) {
         CompoundTag copy = tag.copy();
         for (String key : IGNORED_KEYS) {
             copy.remove(key);
         }
+        stripOwnAttachments(copy);
         return copy;
+    }
+
+    /**
+     * Removes only Mobtimizer's own entries from the nested {@link
+     * #FABRIC_ATTACHMENTS_KEY} compound, leaving every other mod's persistent
+     * attachments in place so they still participate in stack identity comparison.
+     *
+     * <p>An earlier version of this fix stripped the whole {@code fabric:attachments}
+     * key. That over-corrected: it silently exempted <em>any</em> other mod's persistent
+     * attachment from stack identity too, directly contradicting this class's own
+     * contract at the top of the file - "anything not named here must match exactly...
+     * including any field added by another mod." A levelling mod, a taming mod, a
+     * variant mod - anything storing identity-relevant state in a Fabric attachment
+     * rather than raw NBT - would have that difference silently ignored, and two mobs
+     * that must not merge would merge. This mod exists specifically to run on heavily
+     * modded servers, so that is exactly the environment where it would bite.
+     * {@code StackKeyFactoryGameTest#thirdPartyModAttachmentStillBlocksMerging} pins this
+     * down directly: a mob carrying an attachment registered under a namespace that is
+     * deliberately not {@code Mobtimizer.MOD_ID} must not compare equal to an otherwise
+     * identical mob that lacks it.
+     *
+     * <p>Removal is keyed off {@link Mobtimizer#MOD_ID} rather than naming {@code
+     * mobtimizer:stack}/{@code mobtimizer:frozen} individually in a third place (the
+     * other two being {@link com.mobtimizer.MobtimizerAttachments} itself and this
+     * class's own {@code IGNORED_KEYS} Javadoc before this fix). Every attachment this
+     * mod registers goes through {@link Mobtimizer#id}, which always produces an id
+     * namespaced {@code mobtimizer}, so any attachment phase 3 adds is excluded
+     * automatically by this same prefix check with no further change here.
+     *
+     * <p><b>The empty-compound trap.</b> If removing our own keys empties the nested
+     * compound entirely - true today, since a mob is never both a host and a frozen
+     * member at once - the {@link #FABRIC_ATTACHMENTS_KEY} entry itself must also be
+     * removed, not left behind as an empty compound. Leaving it would reproduce the
+     * original two-mob cap in a subtler form: a host carrying only this mod's own
+     * attachments would end up with an empty {@code fabric:attachments} key that a loose,
+     * never-touched mob simply does not have, so the two would still compare unequal for
+     * a reason that has nothing to do with any third-party mod.
+     * {@code StackKeyFactoryGameTest#explicitlySetAttachmentDoesNotBlockMerging} pins
+     * this exact case down.
+     */
+    private static void stripOwnAttachments(CompoundTag tag) {
+        tag.getCompound(FABRIC_ATTACHMENTS_KEY).ifPresent(attachments -> {
+            String ownPrefix = Mobtimizer.MOD_ID + ":";
+            for (String key : Set.copyOf(attachments.keySet())) {
+                if (key.startsWith(ownPrefix)) {
+                    attachments.remove(key);
+                }
+            }
+
+            if (attachments.isEmpty()) {
+                tag.remove(FABRIC_ATTACHMENTS_KEY);
+            } else {
+                tag.put(FABRIC_ATTACHMENTS_KEY, attachments);
+            }
+        });
     }
 }

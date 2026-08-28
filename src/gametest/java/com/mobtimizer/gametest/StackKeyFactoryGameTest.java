@@ -3,12 +3,16 @@ package com.mobtimizer.gametest;
 import com.mobtimizer.MobtimizerAttachments;
 import com.mobtimizer.identity.StackKeyFactory;
 import com.mobtimizer.stack.MobStack;
+import com.mojang.serialization.Codec;
+import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
+import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.animal.cow.Cow;
@@ -33,6 +37,23 @@ import java.util.UUID;
  */
 public final class StackKeyFactoryGameTest {
     private static final BlockPos POS = new BlockPos(1, 2, 1);
+
+    /**
+     * Simulates a real third-party mod's own persistent attachment - same shape as
+     * {@code MobtimizerAttachments.FROZEN} (a persistent {@code Boolean}), just
+     * registered under a namespace that is deliberately not {@code Mobtimizer.MOD_ID} -
+     * for {@link #thirdPartyModAttachmentStillBlocksMerging}. {@code AttachmentRegistry}
+     * backs this with a plain, always-open {@code Map<Identifier, AttachmentType<?>>}
+     * (confirmed by disassembly of {@code AttachmentRegistryImpl.register}: an
+     * unconditional {@code Map.put}, no lifecycle gating), so creating it here in a
+     * static field - rather than through a dedicated mod-init entrypoint like {@code
+     * Mobtimizer.onInitialize} uses for the real attachments - is safe: it registers the
+     * moment this test class is first loaded, which is always before any {@code @GameTest}
+     * method on it runs.
+     */
+    private static final AttachmentType<Boolean> SIMULATED_THIRD_PARTY_ATTACHMENT =
+            AttachmentRegistry.create(Identifier.fromNamespaceAndPath("thirdpartymod", "affinity"),
+                    builder -> builder.persistent(Codec.BOOL).initializer(() -> Boolean.FALSE));
 
     @GameTest
     public void identicalMobsProduceEqualKeys(GameTestHelper helper) {
@@ -238,13 +259,20 @@ public final class StackKeyFactoryGameTest {
      * at all until the first time something calls {@code setAttached} on it with an
      * explicit value - confirmed empirically by diffing a plain cow's tag against the
      * same cow's tag right after {@code StackManager.merge} gives it its first member.
-     * Left out of {@code IGNORED_KEYS}, that key would have made a host's stack key
-     * change the instant it gained its first member (a plain, never-touched mob never
-     * has the key), so every later merge attempt into that same host would compare
-     * unequal and be refused forever after - silently capping every stack at exactly two
-     * mobs, regardless of species, variant or config. Sets the attachment directly here,
-     * bypassing {@code DormantStore}/{@code StackManager} entirely, to isolate the
-     * regression to {@code StackKeyFactory} alone.
+     * Left unhandled, that key would have made a host's stack key change the instant it
+     * gained its first member (a plain, never-touched mob never has the key), so every
+     * later merge attempt into that same host would compare unequal and be refused
+     * forever after - silently capping every stack at exactly two mobs, regardless of
+     * species, variant or config. Sets the attachment directly here, bypassing {@code
+     * DormantStore}/{@code StackManager} entirely, to isolate the regression to {@code
+     * StackKeyFactory} alone.
+     *
+     * <p>Also pins the empty-compound trap in {@code stripOwnAttachments} explicitly,
+     * not just implicitly through the final equality check: a mob carrying only this
+     * mod's own attachments must have {@code fabric:attachments} disappear entirely once
+     * stripped, not survive as an empty compound - an empty compound would still make
+     * this mob's stripped tag differ from a plain mob's, which lacks the key altogether,
+     * silently reproducing the original two-mob cap in a subtler, harder-to-diagnose form.
      */
     @GameTest
     public void explicitlySetAttachmentDoesNotBlockMerging(GameTestHelper helper) {
@@ -252,13 +280,54 @@ public final class StackKeyFactoryGameTest {
         Cow withAttachment = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
         withAttachment.setAttached(MobtimizerAttachments.STACK, MobStack.EMPTY.withMember(UUID.randomUUID()));
 
-        helper.assertFalse(StackKeyFactory.rawSerialize(plain).contains("fabric:attachments"),
+        helper.assertFalse(StackKeyFactory.rawSerialize(plain).contains(StackKeyFactory.FABRIC_ATTACHMENTS_KEY),
                 "setup sanity check: a mob nothing has ever attached anything to must have no fabric:attachments key");
-        helper.assertTrue(StackKeyFactory.rawSerialize(withAttachment).contains("fabric:attachments"),
+        helper.assertTrue(StackKeyFactory.rawSerialize(withAttachment).contains(StackKeyFactory.FABRIC_ATTACHMENTS_KEY),
                 "setup sanity check: explicitly setting an attachment must actually produce a fabric:attachments key");
+
+        CompoundTag strippedWithAttachment = StackKeyFactory.stripIgnored(StackKeyFactory.rawSerialize(withAttachment));
+        helper.assertFalse(strippedWithAttachment.contains(StackKeyFactory.FABRIC_ATTACHMENTS_KEY),
+                "a mob carrying only this mod's own attachments must have fabric:attachments removed entirely once "
+                        + "stripped, not survive as an empty compound - an empty compound would still differ from a "
+                        + "plain mob's stripped tag, which lacks the key altogether");
+
         helper.assertTrue(StackKeyFactory.of(plain).equals(StackKeyFactory.of(withAttachment)),
                 "a mob with an explicitly-set STACK attachment must still share a key with an otherwise identical "
                         + "plain mob - otherwise a host could never accept a second member");
+        helper.succeed();
+    }
+
+    /**
+     * Task 8 review finding: the fix above must not overcorrect into stripping the
+     * entire {@code fabric:attachments} compound - that would silently exempt any OTHER
+     * mod's persistent attachment from stack identity too, directly contradicting this
+     * class's own contract ("anything not named here must match exactly for two mobs to
+     * merge, including any field added by another mod"). A levelling mod, a taming mod,
+     * a variant mod - anything storing identity-relevant state in a Fabric attachment
+     * rather than raw NBT - would have that difference silently ignored, and two mobs
+     * that must not merge would merge; this mod exists specifically to run on heavily
+     * modded servers, so that is exactly the environment where it would bite. Sets
+     * {@link #SIMULATED_THIRD_PARTY_ATTACHMENT} on only one of two otherwise-identical
+     * cows and asserts they do not share a key - the assertion proving third-party
+     * attachments still participate in stack identity. Without this test, a future
+     * simplification back to stripping the whole key would pass every other test here.
+     */
+    @GameTest
+    public void thirdPartyModAttachmentStillBlocksMerging(GameTestHelper helper) {
+        Cow plain = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow withThirdPartyAttachment = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        withThirdPartyAttachment.setAttached(SIMULATED_THIRD_PARTY_ATTACHMENT, Boolean.TRUE);
+
+        CompoundTag rawWithThirdParty = StackKeyFactory.rawSerialize(withThirdPartyAttachment);
+        helper.assertTrue(rawWithThirdParty.getCompound(StackKeyFactory.FABRIC_ATTACHMENTS_KEY)
+                        .map(attachments -> attachments.contains("thirdpartymod:affinity"))
+                        .orElse(false),
+                "setup sanity check: setting a third-party attachment must actually produce a nested entry for it");
+
+        helper.assertFalse(StackKeyFactory.of(plain).equals(StackKeyFactory.of(withThirdPartyAttachment)),
+                "a mob carrying another mod's persistent attachment must not share a key with an otherwise "
+                        + "identical mob that lacks it - only Mobtimizer's own attachments may be excluded "
+                        + "from stack identity");
         helper.succeed();
     }
 }
