@@ -3,6 +3,7 @@ package com.mobtimizer.gametest;
 import com.mobtimizer.MobtimizerAttachments;
 import com.mobtimizer.config.ConfigManager;
 import com.mobtimizer.freeze.Dormancy;
+import com.mobtimizer.identity.StackEligibility;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -16,10 +17,13 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.cow.Cow;
+import net.minecraft.world.entity.animal.equine.Horse;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.world.level.storage.TagValueOutput;
 import net.minecraft.world.level.storage.ValueInput;
+
+import java.lang.reflect.Method;
 
 /**
  * Exercises {@link Dormancy} and the freeze Mixins against real spawned mobs and a
@@ -201,6 +205,73 @@ public final class DormancyGameTest {
             helper.assertTrue(member.tickCount == before + 1,
                     "CONSERVATIVE mode must let the base tick run even for a frozen member - "
                             + "only serverAiStep is suppressed, not the whole tick");
+        } finally {
+            ConfigManager.get().freeze.mode = originalMode;
+        }
+
+        helper.succeed();
+    }
+
+    /**
+     * Proves {@link com.mobtimizer.mixin.FrozenAiMixin}'s cancellation logic is
+     * correct, not just that {@code serverAiStep} resolves as an injection target -
+     * load-time target validation only proves the name exists, and says nothing
+     * about whether the {@code if}-condition guarding {@code ci.cancel()} is the
+     * right way round. Since this Mixin is CONSERVATIVE mode's entire reason to
+     * exist, a logic inversion would ship with every other test in this file still
+     * green.
+     *
+     * <p>{@code serverAiStep()} is {@code protected}, so it cannot be called
+     * directly from this package the way {@code checkDespawn()} and
+     * {@code tickNonPassenger()} are called elsewhere in this file - reflection is
+     * used only for the method call itself. The observable does <em>not</em> need
+     * reflection: {@code noActionTime} (incremented unconditionally at the very top
+     * of {@code serverAiStep()}, confirmed by disassembly) is {@code protected} on
+     * {@code LivingEntity} but has a public getter, {@code getNoActionTime()} - a
+     * meaningfully less fragile probe than reading a private field directly, since
+     * it is public API that would only change with an explicit, visible signature
+     * change rather than incidental field renaming.
+     *
+     * <p>Reflection does not bypass the Mixin: Fabric/Mixin rewrites
+     * {@code Mob.serverAiStep()}'s actual bytecode at class-load time, before any
+     * caller - direct, reflective, or otherwise - ever obtains a reference to the
+     * method, so an invocation through {@code Method.invoke} runs the exact same
+     * transformed code a real tick would.
+     */
+    @GameTest
+    public void frozenAiMixinOnlyCancelsServerAiStepInConservativeMode(GameTestHelper helper) throws ReflectiveOperationException {
+        Method serverAiStep = Mob.class.getDeclaredMethod("serverAiStep");
+        serverAiStep.setAccessible(true);
+
+        helper.assertTrue(ConfigManager.get().freeze.isAggressive(),
+                "setup sanity check: this test assumes the default AGGRESSIVE mode for its first half");
+
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, HOST_POS);
+        Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, MEMBER_POS);
+        Dormancy.freeze(member, host);
+
+        int beforeAggressive = member.getNoActionTime();
+        serverAiStep.invoke(member);
+        helper.assertTrue(member.getNoActionTime() == beforeAggressive + 1,
+                "FrozenAiMixin must not cancel serverAiStep in AGGRESSIVE mode - EntityTickMixin already skips the "
+                        + "whole tick upstream so this path is never reached there in practice, but the Mixin's own "
+                        + "mode check must still be correct if anything ever calls serverAiStep directly");
+
+        String originalMode = ConfigManager.get().freeze.mode;
+        try {
+            ConfigManager.get().freeze.mode = "CONSERVATIVE";
+
+            int whileFrozen = member.getNoActionTime();
+            serverAiStep.invoke(member);
+            helper.assertTrue(member.getNoActionTime() == whileFrozen,
+                    "FrozenAiMixin must actually cancel serverAiStep for a frozen member in CONSERVATIVE mode - "
+                            + "noActionTime must not advance");
+
+            Dormancy.thaw(member);
+            int afterThaw = member.getNoActionTime();
+            serverAiStep.invoke(member);
+            helper.assertTrue(member.getNoActionTime() == afterThaw + 1,
+                    "once thawed, serverAiStep must run normally again even in CONSERVATIVE mode");
         } finally {
             ConfigManager.get().freeze.mode = originalMode;
         }
@@ -476,6 +547,43 @@ public final class DormancyGameTest {
 
         Dormancy.thaw(member);
         helper.assertTrue(member.broadcastToPlayer(player), "a thawed member must broadcast normally again");
+
+        helper.succeed();
+    }
+
+    /**
+     * Turns {@link com.mobtimizer.mixin.EntityCollisionMixin}'s documented dependency
+     * on {@link StackEligibility} into something that fails loudly instead of a
+     * comment nobody re-reads. {@code AbstractHorse.isPushable()} is a complete
+     * override with no {@code super} call (confirmed by disassembly:
+     * {@code return !isVehicle();}, entirely independent of {@code LivingEntity}'s
+     * copy the Mixin overrides), so freezing a horse directly - bypassing
+     * eligibility the same way this file's other tests bypass it to isolate a
+     * single Mixin - leaves it fully pushable. That gap is only closed today
+     * because {@code StackEligibility.canStack} excludes every {@code OwnableEntity},
+     * which covers horses (and parrots, sharing the same shape) completely, for an
+     * unrelated reason.
+     *
+     * <p>Both assertions matter together: the first pins today's actual safety net
+     * (eligibility), so this test fails immediately - pointing straight at this
+     * comment - if someone ever relaxes the {@code OwnableEntity} exclusion; the
+     * second demonstrates exactly what such a change would expose, by proving the
+     * collision Mixin itself does nothing for this type regardless of eligibility.
+     */
+    @GameTest
+    public void horsesBypassCollisionSuppressionSoEligibilityMustKeepExcludingThem(GameTestHelper helper) {
+        Horse horse = GameTestMobs.spawnPlain(helper, EntityTypes.HORSE, MEMBER_POS);
+        Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, HOST_POS);
+
+        helper.assertFalse(StackEligibility.canStack(horse),
+                "a horse must stay ineligible to stack - if this ever changes, EntityCollisionMixin will NOT "
+                        + "protect it, since AbstractHorse.isPushable() bypasses it completely (see below)");
+
+        Dormancy.freeze(horse, host);
+        helper.assertTrue(horse.isPushable(),
+                "AbstractHorse.isPushable() completely overrides LivingEntity's copy with no super call, so a "
+                        + "frozen horse stays pushable regardless of freezing - this type is only safe today because "
+                        + "StackEligibility keeps it from ever being frozen in the first place");
 
         helper.succeed();
     }
