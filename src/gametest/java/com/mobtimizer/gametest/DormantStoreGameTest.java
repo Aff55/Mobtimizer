@@ -32,7 +32,7 @@ public final class DormantStoreGameTest {
         Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
         Cow member = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
 
-        DormantStore.INSTANCE.add(host, member);
+        helper.assertTrue(DormantStore.INSTANCE.add(host, member), "add should report success");
         helper.assertTrue(DormantStore.INSTANCE.size(host) == 1, "member should be stored");
         helper.assertTrue(host.getAttachedOrElse(MobtimizerAttachments.STACK, MobStack.EMPTY).memberCount() == 2,
                 "host plus one member is a stack of 2");
@@ -184,7 +184,7 @@ public final class DormantStoreGameTest {
     public void addRefusesToAddAHostAsItsOwnMemberAndLeavesTheStoreUnchanged(GameTestHelper helper) {
         Cow host = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
 
-        DormantStore.INSTANCE.add(host, host);
+        helper.assertFalse(DormantStore.INSTANCE.add(host, host), "a refused self-add must report false");
 
         helper.assertTrue(DormantStore.INSTANCE.size(host) == 0,
                 "a refused self-add must not change the store's size");
@@ -210,7 +210,8 @@ public final class DormantStoreGameTest {
         DormantStore.INSTANCE.add(busyHost, itsOwnMember);
         helper.assertTrue(DormantStore.INSTANCE.size(busyHost) == 1, "setup sanity check: busyHost already has a member");
 
-        DormantStore.INSTANCE.add(host, busyHost);
+        helper.assertFalse(DormantStore.INSTANCE.add(host, busyHost),
+                "refusing to add a mob that is itself a stack host must report false");
 
         helper.assertTrue(DormantStore.INSTANCE.size(host) == 0,
                 "refusing to add a mob that is itself a stack host must not change the target host's size");

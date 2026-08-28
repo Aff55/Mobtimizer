@@ -50,10 +50,10 @@ public final class DormantStore implements MemberStore {
      * than trusting the caller: adding a host to itself, and adding a mob that is
      * itself already a stack host (which would orphan that mob's own members
      * permanently, since nothing ever revisits a frozen member's own attachment). Both
-     * are logged at {@code ERROR} and leave every attachment untouched - refusing
-     * loudly gets the diagnostic value of a caller bug without letting an exception
-     * out of merge orchestration, which runs on the server thread and cannot afford to
-     * take the server down over it.
+     * are logged at {@code ERROR}, leave every attachment untouched, and report
+     * {@code false} - refusing loudly gets the diagnostic value of a caller bug without
+     * letting an exception out of merge orchestration, which runs on the server thread
+     * and cannot afford to take the server down over it.
      *
      * <p>The third precondition - {@code member} already belongs to a <em>different</em>
      * host - is not checked here. Detecting it cheaply would require an index over
@@ -62,12 +62,12 @@ public final class DormantStore implements MemberStore {
      * {@link MemberStore#add}.
      */
     @Override
-    public void add(Mob host, Mob member) {
+    public boolean add(Mob host, Mob member) {
         if (member.getUUID().equals(host.getUUID())) {
             Mobtimizer.LOGGER.error(
                     "Refusing to stack {} ({}) as a member of itself",
                     EntityType.getKey(host.getType()), host.getUUID());
-            return;
+            return false;
         }
 
         MobStack memberOwnStack = stackOf(member);
@@ -78,11 +78,12 @@ public final class DormantStore implements MemberStore {
                     EntityType.getKey(member.getType()), member.getUUID(),
                     EntityType.getKey(host.getType()), host.getUUID(),
                     memberOwnStack.members().size());
-            return;
+            return false;
         }
 
         Dormancy.freeze(member, host);
         host.setAttached(MobtimizerAttachments.STACK, stackOf(host).withMember(member.getUUID()));
+        return true;
     }
 
     /**

@@ -16,7 +16,17 @@ public interface MemberStore {
     int size(Mob host);
 
     /**
-     * Adds {@code member} to {@code host}'s stack.
+     * Adds {@code member} to {@code host}'s stack. Returns whether it was actually
+     * added - {@code false} means a documented precondition below was violated and the
+     * implementation defensively refused rather than mutating anything.
+     *
+     * <p>This return value exists so a caller's own precondition checks never have to be
+     * trusted, by discipline alone, to stay in exact lockstep with whatever this method
+     * defends against internally - that set of guards can grow (it already has once: see
+     * Task 6's fix round, which added the first two checks below after shipping without
+     * them) independently of any given caller. {@link StackManager#merge} propagates
+     * this value directly for exactly that reason, rather than assuming its own checks
+     * make every refusal path here unreachable and returning a hardcoded {@code true}.
      *
      * <p>The caller is responsible for all of the following; violating any of them
      * corrupts state silently unless the implementation defends against it:
@@ -32,12 +42,12 @@ public interface MemberStore {
      *       end up live in two attachments at once.
      * </ul>
      * Implementations may detect and refuse some of these defensively (typically by
-     * logging and declining to mutate anything, not by throwing - a caller mistake
-     * here should never be able to bring down a live server) but are not required to
-     * catch all three; the third in particular is not cheaply detectable without an
-     * index over every host.
+     * logging and returning {@code false} without mutating anything, not by throwing - a
+     * caller mistake here should never be able to bring down a live server) but are not
+     * required to catch all three; the third in particular is not cheaply detectable
+     * without an index over every host.
      */
-    void add(Mob host, Mob member);
+    boolean add(Mob host, Mob member);
 
     /**
      * Removes one member and returns it as a live, thawed mob. Returns null both when

@@ -34,8 +34,16 @@ public final class StackManager {
      * attachment has a non-empty member list, which is precisely {@code add}'s
      * member-is-a-host check. So whenever this method reaches the {@code
      * DormantStore.INSTANCE.add} call below, neither of the store's guards can fire:
-     * the mutation always actually happens, and {@code return true} is never a lie
-     * about a merge the store silently declined.
+     * the mutation always actually happens today.
+     *
+     * <p>That equivalence is proven, not assumed - but it is still a fact about
+     * <em>today's</em> two guards, maintained by two call sites agreeing, not by the
+     * compiler. Rather than lean on it forever, this method propagates {@code add}'s own
+     * return value instead of hardcoding {@code true} once it decides to attempt the
+     * mutation: if the store's guards are ever extended independently of this method (as
+     * they already were once, in Task 6's own fix round), a caller here starts getting an
+     * honest {@code false} automatically, not a return value that silently drifts out of
+     * sync with what the store actually did.
      *
      * <p>The third precondition - {@code member} must not already belong to some
      * <em>other</em> host - is explicitly left unenforced at the store, per {@link
@@ -64,9 +72,9 @@ public final class StackManager {
         if (Dormancy.isFrozen(host) || Dormancy.isFrozen(member)) return false; // already claimed elsewhere
         if (!StackKeyFactory.of(host).equals(StackKeyFactory.of(member))) return false;
 
-        DormantStore.INSTANCE.add(host, member);
+        boolean added = DormantStore.INSTANCE.add(host, member);
         StackNameplate.refresh(host);
-        return true;
+        return added;
     }
 
     /** Releases exactly one member as an independent mob, or null if the host is alone. */
