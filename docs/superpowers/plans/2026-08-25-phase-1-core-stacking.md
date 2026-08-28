@@ -102,6 +102,24 @@ methods resolve directly on `Mob`/`Entity`.
 Also note `MobtimizerAttachments.STACK` is null until `onInitialize()` runs. Fine for gametests
 and real runs; a plain JUnit test touching it would need `register()` called manually.
 
+### Scanner corrections from Task 9
+
+Two defects in this plan's `MergeScanner` sample, both found and fixed during implementation:
+
+- **The tick counter must be per-`ServerLevel`, not a single shared static.** A shared counter is
+  incremented once per dimension per tick, so on a multi-dimension server the dimensions compete
+  for the same countdown and most of them are starved of scans.
+- **`maxMergesPerScan` must cap merges *within* one crowd, not just across crowds.** The sample
+  merged every match found around a host and only then decremented the budget, so a single large
+  crowd could blow straight through the limit in one pass — exactly the tick spike the budget
+  exists to prevent.
+
+Also worth recording from that task's cost analysis: the `getAllEntities()` walk this plan flags
+as the known limitation is **not** the sharpest edge. The per-candidate work — an AABB query plus
+a full NBT serialization via `StackKeyFactory.of` for every same-type neighbour — is not itself
+budget-limited, since the budget counts merges rather than comparisons. One enormous crowd costs
+more than a level full of small ones.
+
 ### The `fabric:attachments` trap — read this before touching the identity key
 
 **Setting any Fabric attachment adds a `fabric:attachments` key to that entity's serialized
@@ -1942,7 +1960,7 @@ import java.util.List;
 import java.util.UUID;
 
 public final class MergeScanner {
-    private static int tickCounter;
+    private static final Map<ServerLevel, Integer> TICK_COUNTERS = new WeakHashMap<>();
 
     private MergeScanner() {}
 
@@ -1977,7 +1995,7 @@ public final class MergeScanner {
         AABB box = host.getBoundingBox().inflate(config.merge.radius);
 
         List<Mob> matches = new ArrayList<>();
-        for (Mob other : host.level().getEntitiesOfClass(Mob.class, box)) {
+        for (Mob other : host.level().getEntities(EntityTypeTest.forClass(Mob.class), box, m -> true)) {
             if (other == host) continue;
             if (other.getType() != host.getType()) continue;
             if (Dormancy.isFrozen(other)) continue;
@@ -2024,7 +2042,7 @@ public final class MergeScanner {
 }
 ```
 
-**Verify:** `ServerLevel.getAllEntities()` and `Level.getEntitiesOfClass(Class, AABB)` — confirm both names in 26.2.
+**Verified in Task 9:** `ServerLevel.getAllEntities()` exists. `Level.getEntitiesOfClass(Class, AABB)` does **not** — use `getEntities(EntityTypeTest.forClass(Mob.class), box, predicate)`.
 
 **Known limitation to record, not fix here:** `getAllEntities()` walks every entity in the level each scan. At the default 1-second interval that is acceptable and it keeps phase 1 simple, but it is the first thing to optimize if profiling shows the scanner itself costing time. Leave a comment saying so; do not pre-optimize it now.
 
@@ -2033,11 +2051,11 @@ public final class MergeScanner {
 In `Mobtimizer.onInitialize()`:
 
 ```java
-net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_WORLD_TICK
+net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_LEVEL_TICK
         .register(MergeScanner::tick);
 ```
 
-**Verify:** confirm `ServerTickEvents.END_WORLD_TICK` exists in Fabric API 0.158.0 and takes a `ServerLevel`.
+The event is `END_LEVEL_TICK`, not `END_WORLD_TICK` — the latter does not exist in Fabric API 0.158.0. Verified in Task 9.
 
 - [ ] **Step 5: Run the gametests**
 
