@@ -44,9 +44,15 @@ public final class MobtimizerConfig {
 
     public static final class Entities {
         public String mode = "DENYLIST";
+        // wither/ender_dragon are defence in depth: StackEligibility.canStack already
+        // excludes both by explicit instanceof (no general "is a boss" check exists to
+        // hook in 26.2 - see that class's Javadoc), but modded bosses have no such
+        // hard-coded exclusion and will always need denylisting here instead.
         public List<String> denylist = new ArrayList<>(List.of(
                 "minecraft:villager",
-                "minecraft:wandering_trader"
+                "minecraft:wandering_trader",
+                "minecraft:wither",
+                "minecraft:ender_dragon"
         ));
         public List<String> allowlist = new ArrayList<>();
 

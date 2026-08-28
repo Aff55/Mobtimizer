@@ -8,6 +8,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.entity.animal.wolf.Wolf;
+import net.minecraft.world.entity.boss.wither.WitherBoss;
 import net.minecraft.world.entity.npc.villager.Villager;
 
 /**
@@ -80,6 +81,37 @@ public final class StackEligibilityGameTest {
         Villager villager = GameTestMobs.spawnPlain(helper, EntityTypes.VILLAGER, POS);
 
         helper.assertFalse(StackEligibility.canStack(villager), "villagers are denylisted by the default config");
+        helper.succeed();
+    }
+
+    /**
+     * Restores the design spec's dropped "is invulnerable, or is a boss" rule.
+     * {@code WitherBoss.checkDespawn()} is a complete override with no {@code super}
+     * call (confirmed by disassembly: peaceful-difficulty discard only, none of
+     * {@code Mob}'s distance-based logic), so {@code FrozenDespawnMixin} never fires
+     * for it - a frozen Wither member would be silently discarded the instant a
+     * player switches the world to Peaceful. Excluded by explicit {@code instanceof}
+     * in {@code StackEligibility}, not a general "is a boss" check: 26.2 has no
+     * entity-type tag, shared interface, or common method for it (see that class's
+     * Javadoc for what was checked), and {@code WitherBoss}/{@code EnderDragon} don't
+     * even share a boss mechanism with each other, let alone something a general
+     * check could hook. {@code minecraft:wither}/{@code minecraft:ender_dragon} are
+     * also in the default denylist as defence in depth.
+     *
+     * <p>{@code EnderDragon} shares the same override-with-no-super shape but is not
+     * separately covered here: spawning one in a gametest brings in dimension/fight-
+     * coordinator machinery this test has no need to exercise, and the exclusion is
+     * one shared line in {@code canStack} - proving it for {@code WitherBoss} proves
+     * the line runs; a second {@code instanceof} in an already-passing test would not
+     * add coverage of anything the first doesn't already reach.
+     */
+    @GameTest
+    public void witherCannotStack(GameTestHelper helper) {
+        WitherBoss wither = GameTestMobs.spawnPlain(helper, EntityTypes.WITHER, POS);
+
+        helper.assertFalse(StackEligibility.canStack(wither),
+                "a Wither must not be stackable - it silently bypasses FrozenDespawnMixin, "
+                        + "so freezing it would risk losing it on a Peaceful-difficulty switch");
         helper.succeed();
     }
 
