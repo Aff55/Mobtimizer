@@ -102,6 +102,28 @@ methods resolve directly on `Mob`/`Entity`.
 Also note `MobtimizerAttachments.STACK` is null until `onInitialize()` runs. Fine for gametests
 and real runs; a plain JUnit test touching it would need `register()` called manually.
 
+### The `fabric:attachments` trap — read this before touching the identity key
+
+**Setting any Fabric attachment adds a `fabric:attachments` key to that entity's serialized
+NBT.** Found in Task 8, and it is the most damaging bug this plan has produced.
+
+The identity key is "serialize the mob, strip an ignore list, compare what's left." The instant
+a host gains its first member, `setAttached` writes `fabric:attachments` into its NBT — so the
+host's identity tag no longer matches any loose mob's. **Every stack silently caps at exactly
+two mobs, forever.** No error, no log, no exception. A 100-cow farm merges into 50 pairs and
+looks like it is working.
+
+`fabric:attachments` is therefore on `IGNORED_KEYS`, and any future phase adding an attachment
+must keep it there.
+
+Two lessons worth carrying:
+
+- **Task 4's exhaustive ignore-list audit could not have caught this.** At that point no
+  attachment had ever been set, so the key did not exist in any serialized mob. An audit is only
+  as complete as the state that exists when you run it.
+- **No two-mob test can catch it.** Merging one member into a host succeeds; only the *second*
+  merge fails. Any test that exercises stacking must use at least three mobs.
+
 ### The `GameTestHelper.spawn` trap
 
 **`GameTestHelper.spawn(...)` and its convenience overloads silently mark every mob they
@@ -965,11 +987,12 @@ public final class StackKeyFactory {
      * is treated as full health, an accepted inaccuracy recorded in the spec.
      */
     public static final Set<String> IGNORED_KEYS = Set.of(
-            "UUID", "Pos", "Motion", "Rotation", "FallDistance",
-            "HurtTime", "HurtByTimestamp", "DeathTime", "Health",
+            "UUID", "Pos", "Motion", "Rotation", "OnGround", "fall_distance",
+            "HurtTime", "last_hurt_by_player", "last_hurt_by_player_memory_time",
+            "last_hurt_by_mob", "ticks_since_last_hurt_by_mob", "DeathTime", "Health",
             "Air", "Fire", "PortalCooldown", "TicksFrozen", "Brain",
             "Age", "ForcedAge", "InLove", "LoveCause", "Sheared",
-            "CustomName", "CustomNameVisible"
+            "CustomName", "CustomNameVisible", "fabric:attachments"
     );
 
     private StackKeyFactory() {}
@@ -1784,6 +1807,7 @@ public final class StackManager {
         if (host == member) return false;
         if (!StackEligibility.canStack(host) || !StackEligibility.canStack(member)) return false;
         if (isStacked(member)) return false; // never merge a stack into a stack in phase 1
+        if (Dormancy.isFrozen(host) || Dormancy.isFrozen(member)) return false; // already claimed elsewhere
         if (!StackKeyFactory.of(host).equals(StackKeyFactory.of(member))) return false;
 
         DormantStore.INSTANCE.add(host, member);
