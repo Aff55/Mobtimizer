@@ -36,3 +36,7 @@ Thumbs.db
 
 # Subagent-driven development scratch
 .superpowers/
+
+# javap/disassembly scratch from API verification
+*.javap.txt
+entity_full.txt
