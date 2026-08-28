@@ -36,6 +36,27 @@ public final class StackKeyFactory {
      * {@code tickCount - lastHurtByMobTimestamp} on every save, so once populated it
      * drifts on every tick - a mob that has ever been hit by another mob must still be
      * able to merge, so this pair has to be ignored, not just its stale predecessor.
+     *
+     * <p><b>{@code fabric:attachments}</b> was added once {@code StackManager} (Task 8)
+     * became the first code to call {@link #of} on a mob that already had one of this
+     * mod's own attachments explicitly set. Confirmed empirically, not guessed: a freshly
+     * spawned mob's raw serialized tag has no such key at all, but the same mob's tag
+     * gains a top-level {@code "fabric:attachments":{"mobtimizer:stack":{members:[...]}}}
+     * entry the instant {@code DormantStore.add} calls {@code setAttached} on it, even for
+     * a single member - Fabric's attachment API persists every attachment an entity has an
+     * explicit (non-default) value for under this one shared compound, keyed by each
+     * attachment's own id. Left unignored, this silently capped every stack at exactly two
+     * mobs: the moment a host gains its first member, that {@code setAttached} call makes
+     * {@code fabric:attachments} appear in the host's own NBT, and since a plain,
+     * never-merged mob never has that key, every later merge attempt into that same host
+     * would then compare unequal and be refused - regardless of species, variant or
+     * config - which defeats the mod's entire reason to exist. This mod's own {@code
+     * STACK}/{@code FROZEN} attachments are exactly the kind of "the stack owns this going
+     * forward" bookkeeping this list already exists to exclude, the same reasoning as
+     * {@code CustomName}/{@code CustomNameVisible} for the nameplate; ignoring the whole
+     * shared key also covers any other mod's own attachments for the same reason, rather
+     * than naming this mod's two individually and leaving every other mod's attachments to
+     * reintroduce the identical cap.
      */
     public static final Set<String> IGNORED_KEYS = Set.of(
             "UUID", "Pos", "Motion", "Rotation", "OnGround", "fall_distance",
@@ -43,7 +64,7 @@ public final class StackKeyFactory {
             "last_hurt_by_mob", "ticks_since_last_hurt_by_mob", "DeathTime", "Health",
             "Air", "Fire", "PortalCooldown", "TicksFrozen", "Brain",
             "Age", "ForcedAge", "InLove", "LoveCause", "Sheared",
-            "CustomName", "CustomNameVisible"
+            "CustomName", "CustomNameVisible", "fabric:attachments"
     );
 
     private StackKeyFactory() {}

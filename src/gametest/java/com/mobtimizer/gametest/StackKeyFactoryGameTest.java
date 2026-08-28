@@ -1,6 +1,8 @@
 package com.mobtimizer.gametest;
 
+import com.mobtimizer.MobtimizerAttachments;
 import com.mobtimizer.identity.StackKeyFactory;
+import com.mobtimizer.stack.MobStack;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -17,6 +19,7 @@ import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.Enchantments;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Exercises {@link StackKeyFactory#of} against real spawned mobs.
@@ -227,6 +230,35 @@ public final class StackKeyFactoryGameTest {
             helper.assertTrue(raw.contains(key),
                     "'" + key + "' was not found in a real serialized Cow - this IGNORED_KEYS entry may be stale");
         }
+        helper.succeed();
+    }
+
+    /**
+     * Task 8 finding: a mob's raw serialized tag has no {@code fabric:attachments} key
+     * at all until the first time something calls {@code setAttached} on it with an
+     * explicit value - confirmed empirically by diffing a plain cow's tag against the
+     * same cow's tag right after {@code StackManager.merge} gives it its first member.
+     * Left out of {@code IGNORED_KEYS}, that key would have made a host's stack key
+     * change the instant it gained its first member (a plain, never-touched mob never
+     * has the key), so every later merge attempt into that same host would compare
+     * unequal and be refused forever after - silently capping every stack at exactly two
+     * mobs, regardless of species, variant or config. Sets the attachment directly here,
+     * bypassing {@code DormantStore}/{@code StackManager} entirely, to isolate the
+     * regression to {@code StackKeyFactory} alone.
+     */
+    @GameTest
+    public void explicitlySetAttachmentDoesNotBlockMerging(GameTestHelper helper) {
+        Cow plain = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS);
+        Cow withAttachment = GameTestMobs.spawnPlain(helper, EntityTypes.COW, POS.above());
+        withAttachment.setAttached(MobtimizerAttachments.STACK, MobStack.EMPTY.withMember(UUID.randomUUID()));
+
+        helper.assertFalse(StackKeyFactory.rawSerialize(plain).contains("fabric:attachments"),
+                "setup sanity check: a mob nothing has ever attached anything to must have no fabric:attachments key");
+        helper.assertTrue(StackKeyFactory.rawSerialize(withAttachment).contains("fabric:attachments"),
+                "setup sanity check: explicitly setting an attachment must actually produce a fabric:attachments key");
+        helper.assertTrue(StackKeyFactory.of(plain).equals(StackKeyFactory.of(withAttachment)),
+                "a mob with an explicitly-set STACK attachment must still share a key with an otherwise identical "
+                        + "plain mob - otherwise a host could never accept a second member");
         helper.succeed();
     }
 }
