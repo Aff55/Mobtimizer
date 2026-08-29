@@ -40,3 +40,6 @@ Thumbs.db
 # javap/disassembly scratch from API verification
 *.javap.txt
 entity_full.txt
+
+# Claude Code worktree sandboxes (scratch checkouts, not project config)
+.claude/worktrees/
