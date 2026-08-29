@@ -15,6 +15,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.item.ItemStack;
@@ -328,6 +330,109 @@ public final class StackKeyFactoryGameTest {
                 "a mob carrying another mod's persistent attachment must not share a key with an otherwise "
                         + "identical mob that lacks it - only Mobtimizer's own attachments may be excluded "
                         + "from stack identity");
+        helper.succeed();
+    }
+
+    /**
+     * The play-test bug, reproduced directly. {@code GameTestMobs.spawnPlain} never runs
+     * {@code finalizeSpawn}, so every mob in every test above this one is exactly as
+     * unrepresentative of a real spawn as a player-bred baby - which is precisely why
+     * this entire suite passed for as long as the bug shipped. {@link
+     * GameTestMobs#spawnRealistic} is what actually exercises the natural-spawn path a
+     * live world always uses; without it, this test would be just as blind to the bug as
+     * the rest of this file was before a live play-test found it.
+     */
+    @GameTest
+    public void realisticallySpawnedCowsWithRandomAttributeNoiseStillMerge(GameTestHelper helper) {
+        Cow a = GameTestMobs.spawnRealistic(helper, EntityTypes.COW, POS);
+        Cow b = GameTestMobs.spawnRealistic(helper, EntityTypes.COW, POS.above());
+
+        helper.assertFalse(StackKeyFactory.rawSerialize(a).getList(StackKeyFactory.ATTRIBUTES_KEY)
+                        .map(list -> list.isEmpty())
+                        .orElse(true),
+                "setup sanity check: a realistically-spawned cow must actually carry the random-spawn attribute "
+                        + "noise, or this test would pass vacuously");
+        helper.assertFalse(StackKeyFactory.rawSerialize(a).equals(StackKeyFactory.rawSerialize(b)),
+                "setup sanity check: the two cows' raw (unstripped) attribute noise must actually differ, or this "
+                        + "test would not be exercising the bug at all");
+
+        helper.assertTrue(StackKeyFactory.of(a).equals(StackKeyFactory.of(b)),
+                "two realistically-spawned cows must still share a stack key despite each carrying a unique "
+                        + "random follow_range bonus - this is the exact bug a live play-test found");
+        helper.succeed();
+    }
+
+    /**
+     * Zombie's own additional randomness, exercised together through a real spawn:
+     * {@code minecraft:random_spawn_bonus} reused on {@code knockback_resistance} (same
+     * id as the universal one, different attribute), and {@code
+     * minecraft:spawn_reinforcements}'s own randomized base - the one case that is not a
+     * modifier at all. Both are applied unconditionally by {@code
+     * Zombie.handleAttributes}, so this test does not depend on the rare, difficulty-scaled
+     * "leader zombie" roll to be meaningful or reliable.
+     *
+     * <p>{@code setBaby(false)} is forced on both after spawning, deliberately, and is
+     * load-bearing, not decorative: {@code Zombie.finalizeSpawn} independently rolls its
+     * own baby chance every time it is called with a null {@code SpawnGroupData} (the
+     * gametest-server default zombie spawn odds, confirmed by disassembly - unrelated to
+     * {@code Animal}'s {@code Age}-based system entirely, since Zombie tracks baby state
+     * as its own separate boolean flag). A baby zombie carries a real, deterministic
+     * {@code minecraft:movement_speed} base override a plain adult does not - not random
+     * noise, a genuine structural difference - which intermittently failed this exact
+     * test before this line was added (confirmed directly: 2 failures in 8 consecutive
+     * full-suite runs, on this test alone, both times with one zombie's {@code IsBaby}
+     * true and the other false). Whether a naturally-spawned baby and an
+     * identically-aged-out adult of the same species merge is a separate, open design
+     * question this test deliberately does not answer either way - see the Task 8 report's
+     * "baby vs adult" finding.
+     */
+    @GameTest
+    public void realisticallySpawnedZombiesWithRandomAttributeNoiseStillMerge(GameTestHelper helper) {
+        Zombie a = GameTestMobs.spawnRealistic(helper, EntityTypes.ZOMBIE, POS);
+        Zombie b = GameTestMobs.spawnRealistic(helper, EntityTypes.ZOMBIE, POS.above());
+        a.setBaby(false);
+        b.setBaby(false);
+
+        helper.assertFalse(StackKeyFactory.rawSerialize(a).equals(StackKeyFactory.rawSerialize(b)),
+                "setup sanity check: the two zombies' raw attribute noise must actually differ");
+
+        helper.assertTrue(StackKeyFactory.of(a).equals(StackKeyFactory.of(b)),
+                "two realistically-spawned zombies must share a stack key despite each carrying its own random "
+                        + "follow_range/knockback_resistance bonus and a random spawn_reinforcements base value");
+        helper.succeed();
+    }
+
+    /**
+     * The rare "leader zombie" case, reproduced deterministically instead of relying on
+     * {@code Zombie.handleAttributes}'s own difficulty-scaled random roll (up to 5%),
+     * which would make a gametest depending on it genuinely flaky. Forces the exact
+     * modifier {@code Zombie.handleAttributes} would sometimes add on its own, using the
+     * real {@code AttributeInstance} API on a real entity - not hand-built NBT - so this
+     * exercises the actual entity save path {@link StackKeyFactory#of} depends on.
+     *
+     * <p>This is the case that most needed a real entity rather than a hand-built tag:
+     * {@code StackKeyFactoryTest}'s equivalent JUnit coverage can only prove the stripping
+     * logic converges two <em>tags</em> correctly; it cannot show that a real, live
+     * zombie which never received this modifier truly serializes with no {@code
+     * minecraft:max_health} entry at all, which is the fact this whole convergence
+     * depends on. Confirmed directly (temporarily, while building this fix, not asserted
+     * here): a plain zombie's raw {@code attributes} list is exactly {@code []}.
+     */
+    @GameTest
+    public void aStrippedLeaderZombieBonusConvergesWithAMobThatNeverHadOne(GameTestHelper helper) {
+        Zombie plain = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS);
+        Zombie forcedLeader = GameTestMobs.spawnPlain(helper, EntityTypes.ZOMBIE, POS.above());
+        forcedLeader.getAttribute(Attributes.MAX_HEALTH).addPermanentModifier(new AttributeModifier(
+                Identifier.fromNamespaceAndPath("minecraft", "leader_zombie_bonus"),
+                2.0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+
+        helper.assertFalse(StackKeyFactory.rawSerialize(plain).equals(StackKeyFactory.rawSerialize(forcedLeader)),
+                "setup sanity check: the forced leader-zombie modifier must actually change the raw serialized tag");
+
+        helper.assertTrue(StackKeyFactory.of(plain).equals(StackKeyFactory.of(forcedLeader)),
+                "a zombie that picked up the rare leader_zombie_bonus modifier on max_health, then had it "
+                        + "stripped, must converge with a zombie that never had a max_health entry at all - not "
+                        + "survive as a bare {id, base} that the plain zombie lacks entirely");
         helper.succeed();
     }
 }
