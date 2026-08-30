@@ -2,6 +2,7 @@ package com.mobtimizer;
 
 import com.mobtimizer.config.ConfigManager;
 import com.mobtimizer.freeze.Dormancy;
+import com.mobtimizer.freeze.HostPromotion;
 import com.mobtimizer.merge.MergeScanner;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -23,6 +24,7 @@ public final class Mobtimizer implements ModInitializer {
         ConfigManager.load(FabricLoader.getInstance().getConfigDir().resolve("mobtimizer.json"));
         MobtimizerAttachments.register();
         Dormancy.register();
+        HostPromotion.register();
 
         // END_LEVEL_TICK, not END_WORLD_TICK - that constant does not exist in Fabric
         // API 0.158.0. See MergeScanner's class Javadoc for the disassembly-confirmed
