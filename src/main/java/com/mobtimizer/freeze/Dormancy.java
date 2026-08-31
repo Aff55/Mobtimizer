@@ -96,12 +96,31 @@ public final class Dormancy {
      * - the vanilla {@code LevelCallback} hook that fires whenever an entity (freshly
      * spawned <em>or</em> reconstructed from a chunk's saved NBT - both go through the
      * same {@code addFreshEntity}-style registration path) becomes eligible to be sent
-     * to nearby players. Also confirmed {@code onTrackingStart} does not itself
-     * synchronously send any per-player packets (it only registers the entity with
-     * {@code ServerChunkCache}/{@code ChunkMap}; the actual spawn/sync packets are
-     * built later, in {@code ChunkMap}'s own per-tick tracking pass), so this
-     * listener's {@code setInvisible(true)} call lands before any client could ever
-     * be told the entity is visible - not just soon after.
+     * to nearby players.
+     *
+     * <p><b>Ordering, corrected:</b> an earlier revision of this Javadoc claimed
+     * {@code onTrackingStart} sends no per-player packets synchronously, and so that
+     * this listener could never be beaten by a spawn packet. That was wrong.
+     * Re-disassembly shows the opposite: {@code onTrackingStart}'s first act is
+     * {@code ServerChunkCache.addEntity}, reaching {@code ChunkMap.addEntity}, which
+     * calls {@code TrackedEntity.updatePlayers} <em>synchronously</em>; for a player
+     * in range that runs {@code updatePlayer} through to
+     * {@code ServerEntity.addPairing}, whose {@code sendPairingData} builds a
+     * {@code ClientboundSetEntityDataPacket} from the entity's current values and
+     * sends it. All of that precedes Fabric's {@code TAIL} injection, so the flag
+     * set here is genuinely late, not early.
+     *
+     * <p>What actually prevents a visible frame is
+     * {@link com.mobtimizer.mixin.FrozenTrackingMixin}, not the ordering:
+     * {@code updatePlayer} consults {@code Entity.broadcastToPlayer} before it ever
+     * reaches {@code addPairing}, and that Mixin returns {@code false} there for a
+     * frozen member, so in AGGRESSIVE mode no pairing and no spawn packet happen at
+     * all. In CONSERVATIVE mode - where that Mixin deliberately stands down - a
+     * player already inside tracking range at the instant of load can see the member
+     * for up to one tick, until the dirty synced-data update goes out on the next
+     * {@code ChunkMap} pass. That residual flicker is accepted rather than fixed:
+     * closing it would mean getting ahead of vanilla's own tracker registration, and
+     * CONSERVATIVE mode exists precisely to leave vanilla's paths alone.
      */
     public static void register() {
         ServerEntityEvents.ENTITY_LOAD.register((entity, level) -> {
