@@ -1,3 +1,5 @@
+<img src="docs/assets/icon.svg" width="128" align="right" alt="Mobtimizer icon">
+
 # Mobtimizer
 
 A Fabric mod for Minecraft 26.2 that merges same-kind mobs into a single ticking entity
@@ -100,9 +102,9 @@ faster than building and copying while iterating.
 
 ### Mod icon
 
-`fabric.mod.json` points at `src/main/resources/assets/mobtimizer/icon.png`. Drop a
-square PNG there (128×128 or 256×256) and rebuild; Mod Menu picks it up automatically.
-Until that file exists you will see a harmless `broken icon` warning in the log.
+The icon lives at `src/main/resources/assets/mobtimizer/icon.png` (256×256), with the
+vector source kept at [`docs/assets/icon.svg`](docs/assets/icon.svg). To change it,
+replace the PNG and rebuild — Mod Menu picks it up automatically.
 
 ## Commands
 

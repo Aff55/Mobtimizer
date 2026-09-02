@@ -1,0 +1,110 @@
+<svg viewBox="0 0 256 256" width="256" height="256" xmlns="http://www.w3.org/2000/svg" xmlns:c2pa="http://c2pa.org/manifest">
+  <defs>
+    <style>
+      .f{stroke-width:.28;stroke-linejoin:round}
+      .wt{fill:#FFFFFF;stroke:#FFFFFF}
+      .wl{fill:#E4EAF1;stroke:#E4EAF1}
+      .wr{fill:#C0CBD9;stroke:#C0CBD9}
+      .bt{fill:#C4884F;stroke:#C4884F}
+      .bl{fill:#A46B3D;stroke:#A46B3D}
+      .br{fill:#82502D;stroke:#82502D}
+      .st{fill:#F7DDCB;stroke:#F7DDCB}
+      .sl{fill:#E4BEA6;stroke:#E4BEA6}
+      .sr{fill:#C99C82;stroke:#C99C82}
+      .ey{fill:#2B1A11;stroke:#2B1A11}
+      .rim{fill:none;stroke:#EDFCFF;stroke-opacity:.5;stroke-width:.5;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B5C68"/>
+      <stop offset="0.5" stop-color="#134070"/>
+      <stop offset="1" stop-color="#241A63"/>
+    </linearGradient>
+
+    <radialGradient id="halo" cx="0.46" cy="0.5" r="0.52">
+      <stop offset="0" stop-color="#6BE7E2" stop-opacity="0.30"/>
+      <stop offset="0.55" stop-color="#4FB6E0" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#4FB6E0" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="badgeFill" cx="0.35" cy="0.28" r="0.85">
+      <stop offset="0" stop-color="#123A63" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#0A1440" stop-opacity="0.95"/>
+    </radialGradient>
+
+    <filter id="soften" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+
+    <filter id="glow" x="-120%" y="-120%" width="340%" height="340%">
+      <feGaussianBlur stdDeviation="1.8" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <g id="cow">
+      <polygon class="f br" points="2.598,-3.5 0,-2 0,4 2.598,2.5"/>
+      <polygon class="f bl" points="-2.598,-3.5 0,-2 0,4 -2.598,2.5"/>
+
+      <polygon class="f br" points="-1.732,-1 -4.33,0.5 -4.33,6.5 -1.732,5"/>
+      <polygon class="f bl" points="-6.928,-1 -4.33,0.5 -4.33,6.5 -6.928,5"/>
+
+      <polygon class="f br" points="12.124,2 9.526,3.5 9.526,9.5 12.124,8"/>
+      <polygon class="f bl" points="6.928,2 9.526,3.5 9.526,9.5 6.928,8"/>
+
+      <polygon class="f br" points="7.794,4.5 5.196,6 5.196,12 7.794,10.5"/>
+      <polygon class="f bl" points="2.598,4.5 5.196,6 5.196,12 2.598,10.5"/>
+
+      <polygon class="f wr" points="13.856,-8 5.196,-3 5.196,7 13.856,2"/>
+      <polygon class="f wl" points="-8.66,-11 5.196,-3 5.196,7 -8.66,-1"/>
+      <polygon class="f wt" points="0,-16 13.856,-8 5.196,-3 -8.66,-11"/>
+
+      <polygon class="f bt" points="0.433,-13.25 6.495,-9.75 2.165,-7.25 -3.897,-10.75"/>
+      <polygon class="f bl" points="-5.196,-6 0.866,-2.5 0.866,2.5 -5.196,-1"/>
+
+      <polygon class="f br" points="18.186,-0.5 12.99,2.5 12.99,10.5 18.186,7.5"/>
+      <polygon class="f bl" points="6.928,-1 12.99,2.5 12.99,10.5 6.928,7"/>
+      <polygon class="f bt" points="12.124,-4 18.186,-0.5 12.99,2.5 6.928,-1"/>
+
+      <polygon class="f br" points="16.454,-6 14.722,-5 14.722,-2.5 16.454,-3.5"/>
+      <polygon class="f bl" points="12.99,-6 14.722,-5 14.722,-2.5 12.99,-3.5"/>
+      <polygon class="f bt" points="14.722,-7 16.454,-6 14.722,-5 12.99,-6"/>
+
+      <polygon class="f br" points="9.526,-2 7.794,-1 7.794,1.5 9.526,0.5"/>
+      <polygon class="f bl" points="6.062,-2 7.794,-1 7.794,1.5 6.062,0.5"/>
+      <polygon class="f bt" points="7.794,-3 9.526,-2 7.794,-1 6.062,-2"/>
+
+      <polygon class="f sr" points="19.485,4.75 16.887,6.25 16.887,10.25 19.485,8.75"/>
+      <polygon class="f sl" points="14.289,4.75 16.887,6.25 16.887,10.25 14.289,8.75"/>
+      <polygon class="f st" points="16.887,3.25 19.485,4.75 16.887,6.25 14.289,4.75"/>
+
+      <polygon class="f ey" points="17.666,1.6 16.627,2.2 16.627,3.4 17.666,2.8"/>
+      <polygon class="f ey" points="14.549,3.4 13.51,4 13.51,5.2 14.549,4.6"/>
+
+      <polyline class="rim" points="-8.66,-11 0,-16 13.856,-8"/>
+      <polyline class="rim" points="6.928,-1 12.124,-4 18.186,-0.5"/>
+      <polyline class="rim" points="-8.66,-11 -8.66,-1"/>
+    </g>
+  </defs>
+
+  <rect width="256" height="256" fill="url(#bg)"/>
+  <rect width="256" height="256" fill="url(#halo)"/>
+
+  <ellipse cx="122" cy="212" rx="46" ry="10" fill="#040820" opacity="0.22" filter="url(#soften)"/>
+
+  <use href="#cow" transform="translate(92,118.4) scale(4.8)" opacity="0.30"/>
+  <use href="#cow" transform="translate(96,134.4) scale(4.8)" opacity="0.55"/>
+  <use href="#cow" transform="translate(100,150.4) scale(4.8)" opacity="1"/>
+
+  <g>
+    <circle cx="206" cy="206" r="27" fill="#8FF3FF" opacity="0.18" filter="url(#soften)"/>
+    <circle cx="206" cy="206" r="25" fill="url(#badgeFill)"/>
+    <circle cx="206" cy="206" r="25" fill="none" stroke="#EAFDFF" stroke-opacity="0.85" stroke-width="2.5"/>
+    <text x="206" y="207" text-anchor="middle" dominant-baseline="central"
+          font-family="DejaVu Sans, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-size="25" font-weight="800" fill="#FFFFFF" filter="url(#glow)">&#215;3</text>
+  </g>
+</svg>
