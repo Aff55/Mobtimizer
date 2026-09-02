@@ -1,11 +1,15 @@
 package com.mobtimizer;
 
 import com.mobtimizer.breed.BreedingSplit;
+import com.mobtimizer.command.MobtimizerCommand;
+import com.mobtimizer.safety.VersionGuard;
 import com.mobtimizer.config.ConfigManager;
 import com.mobtimizer.freeze.Dormancy;
 import com.mobtimizer.freeze.HostPromotion;
 import com.mobtimizer.merge.MergeScanner;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.resources.Identifier;
@@ -27,6 +31,9 @@ public final class Mobtimizer implements ModInitializer {
         Dormancy.register();
         HostPromotion.register();
         BreedingSplit.register();
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                MobtimizerCommand.register(dispatcher));
+        ServerLifecycleEvents.SERVER_STARTED.register(VersionGuard::onServerStarted);
 
         // END_LEVEL_TICK, not END_WORLD_TICK - that constant does not exist in Fabric
         // API 0.158.0. See MergeScanner's class Javadoc for the disassembly-confirmed
