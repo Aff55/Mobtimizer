@@ -1,5 +1,6 @@
 package com.mobtimizer;
 
+import com.mobtimizer.breed.BreedingSplit;
 import com.mobtimizer.config.ConfigManager;
 import com.mobtimizer.freeze.Dormancy;
 import com.mobtimizer.freeze.HostPromotion;
@@ -25,6 +26,7 @@ public final class Mobtimizer implements ModInitializer {
         MobtimizerAttachments.register();
         Dormancy.register();
         HostPromotion.register();
+        BreedingSplit.register();
 
         // END_LEVEL_TICK, not END_WORLD_TICK - that constant does not exist in Fabric
         // API 0.158.0. See MergeScanner's class Javadoc for the disassembly-confirmed
