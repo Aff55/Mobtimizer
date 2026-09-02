@@ -4,7 +4,7 @@
 	"version": "0.1.0",
 	"name": "Mobtimizer Gametest",
 	"description": "Game tests exercising Mobtimizer against real spawned mobs.",
-	"authors": ["affan"],
+	"authors": ["Aff55"],
 	"license": "MIT",
 	"environment": "*",
 	"entrypoints": {

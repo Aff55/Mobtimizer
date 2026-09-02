@@ -4,8 +4,14 @@
 	"version": "${version}",
 	"name": "Mobtimizer",
 	"description": "Merges same-kind mobs into a single ticking entity while preserving vanilla behaviour.",
-	"authors": ["affan"],
+	"authors": ["Aff55"],
 	"license": "MIT",
+	"icon": "assets/mobtimizer/icon.png",
+	"contact": {
+		"homepage": "https://github.com/Aff55/Mobtimizer",
+		"sources": "https://github.com/Aff55/Mobtimizer",
+		"issues": "https://github.com/Aff55/Mobtimizer/issues"
+	},
 	"environment": "*",
 	"entrypoints": {
 		"main": ["com.mobtimizer.Mobtimizer"]

@@ -370,7 +370,7 @@ The fully-qualified plugin id is required. The short `fabric-loom` id still reso
 	"version": "${version}",
 	"name": "Mobtimizer",
 	"description": "Merges same-kind mobs into a single ticking entity while preserving vanilla behaviour.",
-	"authors": ["affan"],
+	"authors": ["Aff55"],
 	"license": "MIT",
 	"environment": "*",
 	"entrypoints": {
