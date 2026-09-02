@@ -24,12 +24,21 @@ public final class UnstackGameTest {
         return host;
     }
 
+    /**
+     * Scoped with {@code unstackNear} rather than {@code unstackAll} deliberately.
+     * Gametests all run in one shared {@code ServerLevel} at different coordinates, so
+     * any level-wide count is contaminated by whatever other tests happen to have
+     * stacked at the same moment - an earlier version of this test asserted on
+     * {@code unstackAll}'s return value and duly started failing the moment another test
+     * class began building stacks of its own. The radius here is far smaller than the
+     * spacing between test plots, so the count means only what this test built.
+     */
     @GameTest
     public void unstackRestoresIndependentMobs(GameTestHelper helper) {
         Cow host = stackOf(helper, 3);
         helper.assertTrue(StackManager.countOf(host) == 3, "setup sanity check: the stack should represent three cows");
 
-        int released = MobtimizerCommand.unstackAll(helper.getLevel());
+        int released = MobtimizerCommand.unstackNear(helper.getLevel(), host.position(), 8.0);
 
         helper.assertTrue(released == 2, "two members should be released");
         helper.assertTrue(StackManager.countOf(host) == 1, "host is alone again");
@@ -37,13 +46,32 @@ public final class UnstackGameTest {
         helper.succeed();
     }
 
-    /** Nothing stacked is not an error - it releases nothing and reports zero. */
+    /**
+     * Nothing stacked nearby is not an error - it releases nothing and reports zero.
+     * Scoped for the same shared-level reason as above.
+     */
     @GameTest
-    public void unstackAllOnAnEmptyLevelReleasesNothing(GameTestHelper helper) {
-        GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
+    public void unstackWithNothingStackedNearbyReleasesNothing(GameTestHelper helper) {
+        Cow lone = GameTestMobs.spawnPlain(helper, EntityTypes.COW, new BlockPos(1, 2, 1));
 
-        helper.assertTrue(MobtimizerCommand.unstackAll(helper.getLevel()) == 0,
-                "a level with no stacks should release nothing rather than fail");
+        helper.assertTrue(MobtimizerCommand.unstackNear(helper.getLevel(), lone.position(), 8.0) == 0,
+                "an area with no stacks should release nothing rather than fail");
+        helper.succeed();
+    }
+
+    /**
+     * {@code unstackAll} genuinely is level-wide, so this asserts only on the host this
+     * test owns - never on the returned total, which legitimately includes other tests'
+     * stacks in the shared level.
+     */
+    @GameTest
+    public void unstackAllAlsoReleasesThisHost(GameTestHelper helper) {
+        Cow host = stackOf(helper, 3);
+
+        MobtimizerCommand.unstackAll(helper.getLevel());
+
+        helper.assertTrue(StackManager.countOf(host) == 1, "unstack all must have released this host's members too");
+        helper.assertFalse(StackManager.isStacked(host), "and left it unstacked");
         helper.succeed();
     }
 
