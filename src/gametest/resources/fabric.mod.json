@@ -18,6 +18,7 @@
 			"com.mobtimizer.gametest.BreedingSplitGameTest",
 			"com.mobtimizer.gametest.StackNameplateGameTest",
 			"com.mobtimizer.gametest.UnstackGameTest",
+			"com.mobtimizer.gametest.PersistenceGameTest",
 			"com.mobtimizer.gametest.MergeScannerGameTest",
 			"com.mobtimizer.gametest.HostPromotionGameTest"
 		]

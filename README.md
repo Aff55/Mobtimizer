@@ -14,7 +14,26 @@ restores every mob rather than leaving you with one.
 
 ## Status
 
-In design. See [the design spec](docs/superpowers/specs/2026-08-25-mobtimizer-design.md).
+Phase 1 complete: mobs merge, members are kept as frozen entities, counts show on hover,
+and `/mobtimizer unstack` restores everything. Damage routing, breeding and production
+scaling are phases 2–4 — see [the design spec](docs/superpowers/specs/2026-08-25-mobtimizer-design.md).
+
+Breeding works the vanilla way rather than the scaled way: feeding a stacked animal
+releases one member as a partner, so an ordinary two-animal breed still happens. Feeding
+a 100-stack does not yet yield 50 babies — that is phase 3.
+
+## Commands
+
+| | |
+|---|---|
+| `/mobtimizer unstack all` | Release every stacked mob in the current level |
+| `/mobtimizer unstack here [radius]` | Release stacks within `radius` blocks (default 16) |
+| `/mobtimizer unstack type <id>` | Release stacks of one entity type, e.g. `minecraft:cow` |
+| `/mobtimizer stats` | Report how many mobs are held in how many stacks |
+| `/mobtimizer reload` | Re-read the config file |
+
+All require permission level 2 (gamemasters). Uninstalling the mod is also safe on its
+own: members are real entities the whole time, so they simply wake up.
 
 ## Requirements
 
