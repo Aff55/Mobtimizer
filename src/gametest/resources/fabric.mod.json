@@ -16,6 +16,7 @@
 			"com.mobtimizer.gametest.DormancyGameTest",
 			"com.mobtimizer.gametest.StackManagerGameTest",
 			"com.mobtimizer.gametest.BreedingSplitGameTest",
+			"com.mobtimizer.gametest.StackNameplateGameTest",
 			"com.mobtimizer.gametest.MergeScannerGameTest",
 			"com.mobtimizer.gametest.HostPromotionGameTest"
 		]
